@@ -32,16 +32,38 @@ def upsert_race(db: Client, race_date: date, stadium: str, race_no: int,
     return res.data[0]["id"]
 
 
+def bulk_upsert_races(db: Client, races: list[dict]) -> list[dict]:
+    """複数レースをまとめて upsert してIDリストを返す"""
+    if not races:
+        return []
+    res = db.table("races").upsert(races, on_conflict="race_date,stadium,race_no").execute()
+    return res.data or []
+
+
 def upsert_entry(db: Client, race_id: str, entry: dict) -> None:
-    """出走情報を登録または更新"""
+    """出走情報を登録または更新（1艇ずつ）"""
     data = {**entry, "race_id": race_id}
     db.table("entries").upsert(data, on_conflict="race_id,lane").execute()
+
+
+def bulk_upsert_entries(db: Client, entries: list[dict]) -> None:
+    """複数艇の出走情報をまとめて upsert（1レース6艇→1 API call）"""
+    if not entries:
+        return
+    db.table("entries").upsert(entries, on_conflict="race_id,lane").execute()
 
 
 def upsert_prediction(db: Client, race_id: str, prediction: dict) -> None:
     """予想を登録または更新"""
     data = {**prediction, "race_id": race_id}
     db.table("predictions").upsert(data, on_conflict="race_id").execute()
+
+
+def bulk_upsert_predictions(db: Client, predictions: list[dict]) -> None:
+    """複数予想をまとめて upsert（スタジアム単位でまとめる）"""
+    if not predictions:
+        return
+    db.table("predictions").upsert(predictions, on_conflict="race_id").execute()
 
 
 def upsert_result(db: Client, race_id: str, result: dict) -> None:
@@ -78,6 +100,19 @@ def get_races_near_close(db: Client, race_date: date, minutes_before: int = 10) 
         .execute()
     )
     return res.data
+
+
+def get_race_ids_with_entries(db: Client, race_ids: list[str]) -> set[str]:
+    """entries が既に存在する race_id の集合を返す（スキップ判定用）"""
+    if not race_ids:
+        return set()
+    res = (
+        db.table("entries")
+        .select("race_id")
+        .in_("race_id", race_ids)
+        .execute()
+    )
+    return {row["race_id"] for row in (res.data or [])}
 
 
 def mark_race_final(db: Client, race_id: str) -> None:

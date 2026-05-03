@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.boatrace.jp"
 HEADERS = {"User-Agent": "boat-onepick-bot/1.0 (private research tool)"}
-REQUEST_INTERVAL = 2.0
+REQUEST_INTERVAL = 1.0  # 公式サイトへの負荷を抑えつつ高速化（旧: 2.0s）
 
 _RACE_NO_RE = re.compile(r"^(\d{1,2})R$")
 
