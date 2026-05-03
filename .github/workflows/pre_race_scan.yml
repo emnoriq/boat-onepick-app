@@ -10,6 +10,20 @@ on:
     # 16:00〜16:30 JST (UTC 07:00〜07:30) — 10分おき
     - cron: "0,10,20,30 7 * * *"
   workflow_dispatch:
+    inputs:
+      stadium:
+        description: "場名 例: 常滑  (空欄 = 全件実行)"
+        required: false
+        default: ""
+      race_no:
+        description: "レース番号 例: 1  (空欄 = 全件実行)"
+        required: false
+        default: ""
+      force:
+        description: "締切時刻チェックをスキップ (stadium/race_no 指定時に有効)"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   pre-race-scan:
@@ -28,8 +42,42 @@ jobs:
       - name: Install dependencies
         run: pip install -r scraper/requirements.txt
 
+      - name: Show execution mode
+        run: |
+          STADIUM="${{ github.event.inputs.stadium }}"
+          RACE_NO="${{ github.event.inputs.race_no }}"
+          FORCE="${{ github.event.inputs.force }}"
+          if [ -n "$STADIUM" ] && [ -n "$RACE_NO" ]; then
+            echo "mode        : pre_race"
+            echo "実行モード  : single"
+            echo "stadium     : $STADIUM"
+            echo "race_no     : $RACE_NO"
+            echo "force       : $FORCE"
+          else
+            echo "mode        : pre_race"
+            echo "実行モード  : full (締切 10 分前のレースを自動選択)"
+          fi
+
       - name: Run pre-race scan
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: python3 scraper/main.py pre_race
+        run: |
+          STADIUM="${{ github.event.inputs.stadium }}"
+          RACE_NO="${{ github.event.inputs.race_no }}"
+          FORCE="${{ github.event.inputs.force }}"
+
+          if [ -n "$STADIUM" ] && [ -n "$RACE_NO" ]; then
+            # single モード: 1レース指定
+            FORCE_FLAG=""
+            if [ "$FORCE" = "true" ]; then
+              FORCE_FLAG="--force"
+            fi
+            python3 scraper/main.py pre_race \
+              --stadium "$STADIUM" \
+              --race-no "$RACE_NO" \
+              $FORCE_FLAG
+          else
+            # full モード: 締切前レースを全件処理
+            python3 scraper/main.py pre_race
+          fi

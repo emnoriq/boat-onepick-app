@@ -11,9 +11,23 @@ on:
     - cron: "0 8 * * *"
   workflow_dispatch:
     inputs:
-      date:
-        description: "対象日 YYYY-MM-DD (省略時: 今日)"
+      stadium:
+        description: "場名 例: 常滑  (空欄 = 全件実行)"
         required: false
+        default: ""
+      race_no:
+        description: "レース番号 例: 1  (空欄 = 全件実行)"
+        required: false
+        default: ""
+      date:
+        description: "対象日 YYYY-MM-DD 例: 2026-05-03  (空欄 = 今日)"
+        required: false
+        default: ""
+      force:
+        description: "status チェックをスキップして強制取得 (stadium/race_no 指定時に有効)"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   result-scan:
@@ -32,13 +46,53 @@ jobs:
       - name: Install dependencies
         run: pip install -r scraper/requirements.txt
 
+      - name: Show execution mode
+        run: |
+          STADIUM="${{ github.event.inputs.stadium }}"
+          RACE_NO="${{ github.event.inputs.race_no }}"
+          DATE_IN="${{ github.event.inputs.date }}"
+          FORCE="${{ github.event.inputs.force }}"
+          TARGET_DATE="${DATE_IN:-$(date -u '+%Y-%m-%d')}"
+          if [ -n "$STADIUM" ] && [ -n "$RACE_NO" ]; then
+            echo "mode        : result"
+            echo "実行モード  : single"
+            echo "stadium     : $STADIUM"
+            echo "race_no     : $RACE_NO"
+            echo "date        : $TARGET_DATE"
+            echo "force       : $FORCE"
+          else
+            echo "mode        : result"
+            echo "実行モード  : full (status=final のレースを自動選択)"
+            echo "date        : $TARGET_DATE"
+          fi
+
       - name: Run result scan
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
+          STADIUM="${{ github.event.inputs.stadium }}"
+          RACE_NO="${{ github.event.inputs.race_no }}"
+          DATE_IN="${{ github.event.inputs.date }}"
+          FORCE="${{ github.event.inputs.force }}"
+
           DATE_ARG=""
-          if [ -n "${{ github.event.inputs.date }}" ]; then
-            DATE_ARG="--date ${{ github.event.inputs.date }}"
+          if [ -n "$DATE_IN" ]; then
+            DATE_ARG="--date $DATE_IN"
           fi
-          python3 scraper/main.py result $DATE_ARG
+
+          if [ -n "$STADIUM" ] && [ -n "$RACE_NO" ]; then
+            # single モード: 1レース指定
+            FORCE_FLAG=""
+            if [ "$FORCE" = "true" ]; then
+              FORCE_FLAG="--force"
+            fi
+            python3 scraper/main.py result \
+              --stadium "$STADIUM" \
+              --race-no "$RACE_NO" \
+              $DATE_ARG \
+              $FORCE_FLAG
+          else
+            # full モード: status=final のレースを全件処理
+            python3 scraper/main.py result $DATE_ARG
+          fi
