@@ -191,13 +191,26 @@ def morning_scan(today: date,
     logger.info("=== Morning Scan 完了 ===")
     logger.info("開催場: %d場 / 処理レース: %d / 保存: %d / スキップ: %d / 経過: %.0f秒",
                 len(stadiums), total_races, total_saved, total_skipped, total_elapsed)
+    # GitHub Actions サマリ出力
+    entries_saved = total_saved * 6  # 1レース6艇
+    logger.info("--- サマリ ---")
+    logger.info("races 保存/更新: %d件", total_races)
+    logger.info("entries 保存/更新: %d件", entries_saved)
+    logger.info("predictions 保存: %d件 (スキップ含む全保存は %d件)",
+                total_saved, total_saved + total_skipped)
 
 
 def pre_race_scan(today: date, minutes_before: int = 10) -> None:
     """直前スキャン: 展示取得 & 最終判定"""
+    scan_start = time.monotonic()
     db = get_client()
     races = get_races_near_close(db, today, minutes_before)
+    logger.info("=== Pre-Race Scan 開始 ===")
     logger.info("締切%d分前対象: %dレース", minutes_before, len(races))
+
+    exhibition_ok = 0
+    conf_updated  = 0
+    counts = {"buy": 0, "candidate": 0, "skip": 0}
 
     for race in races:
         race_id = race["id"]
@@ -223,6 +236,10 @@ def pre_race_scan(today: date, minutes_before: int = 10) -> None:
         stadium_code = _stadium_name_to_code(stadium)
         condition = fetch_exhibition(stadium_code, race_no, today, entries)
 
+        ex_count = sum(1 for e in entries if e.exhibition_time is not None)
+        if ex_count > 0:
+            exhibition_ok += 1
+
         scores = score_entries(entries, condition)
         score_map = {s.lane: s.total for s in scores}
 
@@ -244,9 +261,18 @@ def pre_race_scan(today: date, minutes_before: int = 10) -> None:
             "reason": "\n".join(result["reason"]),
         })
         mark_race_final(db, race_id)
-        logger.info("%s %dR 最終判定: %s %s (信頼度: %s)",
-                    stadium, race_no, result["decision"], result["pick"],
-                    result["confidence"])
+        conf_updated += 1
+        counts[result["decision"]] = counts.get(result["decision"], 0) + 1
+        logger.info("%s %dR 最終判定: %s %s (信頼度: %.1f)",
+                    stadium, race_no, result["decision"],
+                    result["pick"], result["confidence"])
+
+    elapsed = time.monotonic() - scan_start
+    logger.info("=== Pre-Race Scan 完了 ===")
+    logger.info("対象: %dレース / 展示取得成功: %d / confidence更新: %d",
+                len(races), exhibition_ok, conf_updated)
+    logger.info("buy: %d / candidate: %d / skip: %d / 経過: %.0f秒",
+                counts["buy"], counts["candidate"], counts["skip"], elapsed)
 
 
 def pre_race_scan_single(today: date, stadium_name: str, race_no: int) -> None:
@@ -358,10 +384,16 @@ def _save_race_result(db, race_id: str, stadium: str, race_no: int,
 
 def result_scan(today: date) -> None:
     """結果スキャン: 的中判定"""
+    scan_start = time.monotonic()
     db = get_client()
     races = get_open_races(db, today)
     final_races = [r for r in races if r["status"] == "final"]
+    logger.info("=== Result Scan 開始 ===")
     logger.info("結果取得対象: %dレース", len(final_races))
+
+    fetch_ok = 0
+    hit_count = 0
+    miss_count = 0
 
     for race in final_races:
         race_id = race["id"]
@@ -374,6 +406,16 @@ def result_scan(today: date) -> None:
             continue
 
         _save_race_result(db, race_id, stadium, race_no, res)
+        fetch_ok += 1
+        if res.get("prediction_hit"):
+            hit_count += 1
+        else:
+            miss_count += 1
+
+    elapsed = time.monotonic() - scan_start
+    logger.info("=== Result Scan 完了 ===")
+    logger.info("対象: %dレース / 結果取得成功: %d / 的中: %d / 不的中: %d / 経過: %.0f秒",
+                len(final_races), fetch_ok, hit_count, miss_count, elapsed)
 
 
 def result_scan_single(today: date, stadium_name: str, race_no: int) -> None:
