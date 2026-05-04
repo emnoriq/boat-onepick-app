@@ -478,7 +478,20 @@ if __name__ == "__main__":
                         help="[morning 手動テスト用] 処理するレース数の上限 例: 10")
     args = parser.parse_args()
 
-    target = date.fromisoformat(args.date) if args.date else date.today()
+    # date.today() はサーバのシステムTZ（GitHub Actions = UTC）を使うため
+    # JST の今日を取得するために datetime.now(JST).date() を使う
+    now_jst = datetime.now(JST)
+    target = date.fromisoformat(args.date) if args.date else now_jst.date()
+
+    # ── 起動ログ（date バグ検出用）──────────────────────────────
+    now_utc = datetime.now(timezone.utc)
+    logger.info("=== 実行日時 ===")
+    logger.info("UTC  now : %s", now_utc.strftime("%Y-%m-%d %H:%M:%S UTC"))
+    logger.info("JST  now : %s", now_jst.strftime("%Y-%m-%d %H:%M:%S JST"))
+    logger.info("対象日付 : %s%s",
+                target.isoformat(),
+                " (--date 指定)" if args.date else " (JST 今日)")
+    logger.info("モード   : %s", args.mode)
 
     if args.mode == "morning":
         morning_scan(target,

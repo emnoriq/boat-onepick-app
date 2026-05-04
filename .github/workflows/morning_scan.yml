@@ -27,6 +27,13 @@ jobs:
       - name: Install dependencies
         run: pip install -r scraper/requirements.txt
 
+      - name: Show execution date (debug)
+        run: |
+          echo "UTC  now : $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "JST  now : $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M:%S JST')"
+          echo "date.today() would return: $(date -u '+%Y-%m-%d')"
+          echo "JST today should be      : $(TZ=Asia/Tokyo date '+%Y-%m-%d')"
+
       - name: Run morning scan
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
