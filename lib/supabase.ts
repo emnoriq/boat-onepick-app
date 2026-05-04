@@ -456,3 +456,106 @@ export async function getWatchCandidates(date: string): Promise<WatchCandidate[]
   }
   return result;
 }
+
+// ─── /schedule ページ用 ───────────────────────────────────────────────────────
+
+export type ScheduleRow = {
+  race_id: string;
+  stadium: string;
+  race_no: number;
+  close_time: string;
+  status: "scheduled" | "final" | "finished";
+  // prediction (null = 未評価)
+  pick: string | null;
+  confidence: number | null;
+  decision: "buy" | "candidate" | "skip" | null;
+  is_watch: boolean;
+  reason: string | null;
+  gap: number | null;
+  has_exhibition: boolean;
+  // result
+  trifecta_result: string | null;
+  payout: number | null;
+  popularity: number | null;
+  prediction_hit: boolean | null;
+};
+
+export type ScheduleSummary = {
+  totalRaces: number;
+  evaluatedRaces: number;
+  exhibitionRaces: number;
+  buyCount: number;
+  candidateCount: number;
+  watchCount: number;
+  skipCount: number;
+  openCount: number;   // status = scheduled
+  closedCount: number; // status = final | finished
+};
+
+/**
+ * 今日の全レース + predictions + results を一括取得して ScheduleRow[] を返す。
+ * 未評価レース (predictions なし) も含む。
+ */
+export async function getScheduleData(date: string): Promise<{
+  rows: ScheduleRow[];
+  summary: ScheduleSummary;
+}> {
+  const { data, error } = await db()
+    .from("races")
+    .select(`
+      id, stadium, race_no, close_time, status,
+      predictions(pick, confidence, decision, reason, is_hit),
+      results(trifecta_result, payout, popularity, prediction_hit)
+    `)
+    .eq("race_date", date)
+    .order("close_time", { ascending: true });
+
+  if (error) throw error;
+
+  const rows: ScheduleRow[] = [];
+  for (const race of (data ?? []) as any[]) {
+    const pred   = race.predictions as any | null;
+    const result = race.results     as any | null;
+
+    const reasonText: string | null = pred?.reason ?? null;
+    const conf: number | null       = pred ? Number(pred.confidence) : null;
+    const gap                       = reasonText ? extractGap(reasonText) : null;
+    const isWatch                   = pred
+      ? isWatchCandidate(pred.decision, conf!, reasonText)
+      : false;
+
+    rows.push({
+      race_id:         race.id,
+      stadium:         race.stadium,
+      race_no:         race.race_no,
+      close_time:      race.close_time,
+      status:          race.status,
+      pick:            pred?.pick            ?? null,
+      confidence:      conf,
+      decision:        pred?.decision        ?? null,
+      is_watch:        isWatch,
+      reason:          reasonText,
+      gap,
+      has_exhibition:  hasExhibitionData(reasonText),
+      trifecta_result: result?.trifecta_result ?? null,
+      payout:          result?.payout          ?? null,
+      popularity:      result?.popularity      ?? null,
+      prediction_hit:  result?.prediction_hit  ?? null,
+    });
+  }
+
+  const evaluated = rows.filter((r) => r.decision !== null);
+  const summary: ScheduleSummary = {
+    totalRaces:     rows.length,
+    evaluatedRaces: evaluated.length,
+    exhibitionRaces: rows.filter((r) => r.has_exhibition).length,
+    buyCount:       rows.filter((r) => r.decision === "buy").length,
+    candidateCount: rows.filter((r) => r.decision === "candidate").length,
+    watchCount:     rows.filter((r) => r.is_watch).length,
+    skipCount:      evaluated.filter((r) => r.decision === "skip" && !r.is_watch).length,
+    openCount:      rows.filter((r) => r.status === "scheduled").length,
+    closedCount:    rows.filter((r) => r.status !== "scheduled").length,
+  };
+
+  return { rows, summary };
+}
