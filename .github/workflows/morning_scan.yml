@@ -7,13 +7,21 @@ on:
   workflow_dispatch:
     inputs:
       date:
-        description: "対象日 YYYY-MM-DD (省略時: 今日)"
+        description: "対象日 YYYY-MM-DD (省略時: JST今日)"
+        required: false
+      stadium:
+        description: "場名フィルタ 例: 常滑 (省略時: 全場)"
+        required: false
+      limit_races:
+        description: "取得レース数の上限 例: 10 (手動テスト用, 省略時: 全件)"
         required: false
 
 jobs:
   morning-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 45  # 高速化後の実績値は 3-7 分想定。最大 24 場対応のバッファ。
+    # 並列化後の想定: 全件新規 ≈ 8-10分。並列化前実績 41分40秒。
+    # 万一の retryや多場対応のバッファ込みで 60分。
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -39,8 +47,14 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          DATE_ARG=""
+          ARGS=""
           if [ -n "${{ github.event.inputs.date }}" ]; then
-            DATE_ARG="--date ${{ github.event.inputs.date }}"
+            ARGS="$ARGS --date ${{ github.event.inputs.date }}"
           fi
-          python3 scraper/main.py morning $DATE_ARG
+          if [ -n "${{ github.event.inputs.stadium }}" ]; then
+            ARGS="$ARGS --stadium ${{ github.event.inputs.stadium }}"
+          fi
+          if [ -n "${{ github.event.inputs.limit_races }}" ]; then
+            ARGS="$ARGS --limit-races ${{ github.event.inputs.limit_races }}"
+          fi
+          python3 scraper/main.py morning $ARGS

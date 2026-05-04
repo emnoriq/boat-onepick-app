@@ -9,6 +9,7 @@
 import argparse
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone, timedelta
 from typing import Optional
 
@@ -32,6 +33,37 @@ logger = logging.getLogger(__name__)
 
 JST = timezone(timedelta(hours=9))
 
+# ── 並列フェッチ設定 ─────────────────────────────────────────────
+# 18場 × 12R = 216レースを直列処理すると 11s/R × 216 ≈ 41分かかる。
+# race_list を 4並列、entries を 5並列にすることで ≈ 8-10分に短縮。
+MAX_RACE_LIST_WORKERS = 4   # fetch_race_list 並列数 (18場 / 4 ≒ 5バッチ)
+MAX_ENTRY_WORKERS     = 5   # fetch_entries  並列数 (216R / 5 ≒ 44バッチ)
+
+
+def _fetch_race_list_worker(args: tuple) -> tuple:
+    """Thread worker: 1場のレース一覧を取得して (code, name, races) を返す"""
+    code, name, today = args
+    try:
+        races = fetch_race_list(code, today)
+        return (code, name, races or [])
+    except Exception as e:
+        logger.error("fetch_race_list失敗 %s: %s", name, e)
+        return (code, name, [])
+
+
+def _fetch_entry_worker(args: tuple) -> tuple:
+    """Thread worker: 1レースの出走表取得 & スコア計算を行い結果を返す"""
+    code, name, race_no, race_id, today = args
+    try:
+        entry_list = fetch_entries(code, race_no, today)
+        if not entry_list:
+            return (name, race_no, race_id, None, None)
+        scores = score_entries(entry_list, RaceCondition())
+        return (name, race_no, race_id, entry_list, scores)
+    except Exception as e:
+        logger.error("fetch_entries失敗 %s %dR: %s", name, race_no, e)
+        return (name, race_no, race_id, None, None)
+
 
 def morning_scan(today: date,
                  stadium_filter: Optional[str] = None,
@@ -39,12 +71,11 @@ def morning_scan(today: date,
     """
     朝スキャン: 出走表取得 & 仮スコア計算
 
-    高速化ポイント:
-      - HTTP sleep 2.0s → 1.0s
-      - entries を6艇まとめて bulk upsert (6 API calls → 1)
-      - predictions をスタジアム単位で bulk upsert (12 calls → 1)
-      - 既に entries がある race はスキップ (retry 高速化)
-      - races をスタジアム単位で bulk upsert
+    高速化ポイント (v2):
+      - fetch_race_list を全場 MAX_RACE_LIST_WORKERS で並列取得
+      - fetch_entries を全レース MAX_ENTRY_WORKERS で並列取得
+      - entries / predictions を全場まとめて一括 upsert (各1 API call)
+      - 既存 entries チェックも全場まとめて1 API call
 
     Args:
         stadium_filter: 指定場のみ処理 (例: "常滑"). None で全場.
@@ -53,7 +84,11 @@ def morning_scan(today: date,
     scan_start = time.monotonic()
     db = get_client()
 
+    # ── Phase 1: 開催場一覧取得 ──────────────────────────────────
+    t0 = time.monotonic()
     stadiums = fetch_today_schedule(today)
+    t_p1 = time.monotonic() - t0
+
     if stadium_filter:
         stadiums = [s for s in stadiums if s["stadium"] == stadium_filter]
         if not stadiums:
@@ -61,41 +96,39 @@ def morning_scan(today: date,
             return
 
     logger.info("=== Morning Scan 開始 %s ===", today.isoformat())
-    logger.info("開催場: %d場%s",
-                len(stadiums),
+    logger.info("開催場: %d場%s", len(stadiums),
                 f" (フィルタ: {stadium_filter})" if stadium_filter else "")
+    logger.info("[P1] 開催場一覧取得: %.1f秒", t_p1)
 
-    total_races = 0
-    total_saved = 0
-    total_skipped = 0
+    # ── Phase 2: 全場のレース一覧を並列取得 ──────────────────────
+    t0 = time.monotonic()
+    code_map = {s["stadium"]: s["stadium_code"] for s in stadiums}
+    race_list_args = [(s["stadium_code"], s["stadium"], today) for s in stadiums]
+    stadium_races: dict[str, list[dict]] = {}  # stadium_name → races
 
-    for st_idx, st in enumerate(stadiums, 1):
-        code = st["stadium_code"]
-        name = st["stadium"]
-        st_start = time.monotonic()
+    with ThreadPoolExecutor(max_workers=MAX_RACE_LIST_WORKERS) as pool:
+        futs = {pool.submit(_fetch_race_list_worker, a): a for a in race_list_args}
+        for fut in as_completed(futs):
+            code, name, races = fut.result()
+            if races:
+                stadium_races[name] = races
 
-        races = fetch_race_list(code, today)
-        if not races:
-            logger.info("[%d/%d] %s: レース情報取得不可、スキップ",
-                        st_idx, len(stadiums), name)
-            continue
+    t_p2 = time.monotonic() - t0
+    total_races_count = sum(len(r) for r in stadium_races.values())
+    logger.info("[P2] レース一覧取得 (%d場, 並列%d): %.1f秒 → %d件",
+                len(stadium_races), MAX_RACE_LIST_WORKERS, t_p2, total_races_count)
 
-        logger.info("[%d/%d] %s: %dレース取得",
-                    st_idx, len(stadiums), name, len(races))
-
-        # ── ① 全レースを一括 upsert して race_id を取得 ──────────────
-        races_payload = []
-        race_no_to_close: dict[int, datetime] = {}
+    # ── races upsert ペイロードを全場分まとめて組み立て ───────────
+    all_races_payload: list[dict] = []
+    for name, races in stadium_races.items():
         for r in races:
-            time_str = r["close_time_str"]
             try:
                 close_dt = datetime.strptime(
-                    f"{today.isoformat()} {time_str}", "%Y-%m-%d %H:%M"
+                    f"{today.isoformat()} {r['close_time_str']}", "%Y-%m-%d %H:%M"
                 ).replace(tzinfo=JST).astimezone(timezone.utc)
             except ValueError:
                 continue
-            race_no_to_close[r["race_no"]] = close_dt
-            races_payload.append({
+            all_races_payload.append({
                 "race_date": today.isoformat(),
                 "stadium": name,
                 "race_no": r["race_no"],
@@ -103,44 +136,70 @@ def morning_scan(today: date,
                 "status": "scheduled",
             })
 
-        saved_races = bulk_upsert_races(db, races_payload)
-        race_no_to_id = {row["race_no"]: row["id"] for row in saved_races}
+    # ── Phase 3: races を全場まとめて一括 upsert ─────────────────
+    t0 = time.monotonic()
+    saved_races = bulk_upsert_races(db, all_races_payload)
+    t_p3 = time.monotonic() - t0
 
-        # ── ② entries が既にある race をスキップ（retry 高速化）──────
-        all_race_ids = list(race_no_to_id.values())
-        existing_ids = get_race_ids_with_entries(db, all_race_ids)
-        races_to_fetch = [r for r in races if race_no_to_id.get(r["race_no"]) not in existing_ids]
-        already_done = len(races) - len(races_to_fetch)
-        if already_done:
-            logger.info("  → %d/%d レースは出走表取得済み、スキップ",
-                        already_done, len(races))
-            total_skipped += already_done
+    race_key_to_id: dict[tuple, str] = {
+        (row["stadium"], row["race_no"]): row["id"] for row in saved_races
+    }
+    logger.info("[P3] races upsert (%d件): %.1f秒", len(saved_races), t_p3)
 
-        # ── ③ 出走表取得 & entries / predictions をバッチ保存 ─────────
-        predictions_batch: list[dict] = []
+    # ── Phase 4: 既存 entries チェック (全場一括 1 API call) ──────
+    t0 = time.monotonic()
+    all_race_ids = [row["id"] for row in saved_races]
+    existing_ids = get_race_ids_with_entries(db, all_race_ids)
+    t_p4 = time.monotonic() - t0
+    logger.info("[P4] entries既存確認 (スキップ:%d/%d): %.1f秒",
+                len(existing_ids), len(all_race_ids), t_p4)
 
-        for r in races_to_fetch:
-            # --limit-races チェック
-            if limit_races is not None and total_saved >= limit_races:
-                logger.info("--limit-races %d に達したため処理を終了", limit_races)
-                break
+    # ── fetch タスク一覧を組み立て ────────────────────────────────
+    fetch_tasks: list[tuple] = []
+    for name, races in stadium_races.items():
+        code = code_map[name]
+        for r in races:
+            race_id = race_key_to_id.get((name, r["race_no"]))
+            if not race_id or race_id in existing_ids:
+                continue
+            fetch_tasks.append((code, name, r["race_no"], race_id, today))
 
-            race_no = r["race_no"]
-            race_id = race_no_to_id.get(race_no)
-            if not race_id:
+    if limit_races is not None and len(fetch_tasks) > limit_races:
+        fetch_tasks = fetch_tasks[:limit_races]
+        logger.info("--limit-races %d 適用 → %d件に絞り込み",
+                    limit_races, len(fetch_tasks))
+
+    logger.info("fetch対象: %d件 / スキップ(既存): %d件",
+                len(fetch_tasks), len(existing_ids))
+
+    if not fetch_tasks:
+        logger.info("取得対象なし。Morning Scan 終了。")
+        _log_phase_summary(scan_start, t_p1, t_p2, t_p3, t_p4, 0.0, 0.0, 0.0,
+                           len(stadiums), 0, 0, 0, len(existing_ids))
+        return
+
+    # ── Phase 5: 出走表を全レース並列取得 ────────────────────────
+    t0 = time.monotonic()
+    all_entries_payload: list[dict] = []
+    all_predictions_payload: list[dict] = []
+    fetch_ok = 0
+    fetch_ng = 0
+
+    with ThreadPoolExecutor(max_workers=MAX_ENTRY_WORKERS) as pool:
+        futs = {pool.submit(_fetch_entry_worker, task): task for task in fetch_tasks}
+        done = 0
+        for fut in as_completed(futs):
+            name, race_no, race_id, entry_list, scores = fut.result()
+            done += 1
+
+            if entry_list is None:
+                fetch_ng += 1
+                logger.warning("  [%d/%d] %s %dR: 出走表取得失敗",
+                               done, len(fetch_tasks), name, race_no)
                 continue
 
-            entry_list = fetch_entries(code, race_no, today)
-            if not entry_list:
-                logger.warning("  %s %dR: 出走表取得失敗", name, race_no)
-                continue
-
-            # スコア計算
-            scores = score_entries(entry_list, RaceCondition())
             score_map = {s.lane: s.total for s in scores}
-
-            # entries をまとめて upsert（6艇 → 1 API call）
-            entries_payload = [
+            all_entries_payload.extend([
                 {
                     "race_id": race_id,
                     "lane": e.lane,
@@ -154,50 +213,69 @@ def morning_scan(today: date,
                     "entry_score": score_map.get(e.lane),
                 }
                 for e in entry_list
-            ]
-            bulk_upsert_entries(db, entries_payload)
+            ])
 
-            # 予想をバッチに追加
-            pred_result = decide(scores, RaceCondition())
-            predictions_batch.append({
+            pred = decide(scores, RaceCondition())
+            all_predictions_payload.append({
                 "race_id": race_id,
-                "pick": pred_result["pick"],
-                "confidence": pred_result["confidence"],
-                "decision": pred_result["decision"],
-                "reason": "\n".join(pred_result["reason"]),
+                "pick": pred["pick"],
+                "confidence": pred["confidence"],
+                "decision": pred["decision"],
+                "reason": "\n".join(pred["reason"]),
             })
+            fetch_ok += 1
 
-            total_saved += 1
-            logger.info("  %s %dR: %s %s (conf=%.1f, gap=%.1f) [%d/%d]",
-                        name, race_no,
-                        pred_result["decision"], pred_result["pick"],
-                        pred_result["confidence"], pred_result["gap"],
-                        total_saved, (limit_races or "∞"))
+            # 20件ごとに進捗ログ
+            if done % 20 == 0 or done == len(fetch_tasks):
+                logger.info("  出走表取得: %d/%d完了 (成功:%d 失敗:%d)",
+                            done, len(fetch_tasks), fetch_ok, fetch_ng)
 
-        # ── ④ predictions を一括保存（スタジアム単位 → 1 API call）────
-        if predictions_batch:
-            bulk_upsert_predictions(db, predictions_batch)
+    t_p5 = time.monotonic() - t0
+    logger.info("[P5] 出走表取得 (成功:%d 失敗:%d, 並列%d): %.1f秒",
+                fetch_ok, fetch_ng, MAX_ENTRY_WORKERS, t_p5)
 
-        elapsed = time.monotonic() - st_start
-        total_races += len(races)
-        logger.info("  %s 完了: %d件保存 / 経過 %.1f秒",
-                    name, len(predictions_batch), elapsed)
+    # ── Phase 6: entries を全場まとめて一括 upsert ───────────────
+    t0 = time.monotonic()
+    if all_entries_payload:
+        bulk_upsert_entries(db, all_entries_payload)
+    t_p6 = time.monotonic() - t0
+    logger.info("[P6] entries upsert (%d件): %.1f秒",
+                len(all_entries_payload), t_p6)
 
-        # --limit-races に達していたら外ループも抜ける
-        if limit_races is not None and total_saved >= limit_races:
-            break
+    # ── Phase 7: predictions を全場まとめて一括 upsert ───────────
+    t0 = time.monotonic()
+    if all_predictions_payload:
+        bulk_upsert_predictions(db, all_predictions_payload)
+    t_p7 = time.monotonic() - t0
+    logger.info("[P7] predictions upsert (%d件): %.1f秒",
+                len(all_predictions_payload), t_p7)
 
-    total_elapsed = time.monotonic() - scan_start
+    _log_phase_summary(scan_start, t_p1, t_p2, t_p3, t_p4, t_p5, t_p6, t_p7,
+                       len(stadiums), len(saved_races),
+                       len(all_entries_payload), len(all_predictions_payload),
+                       len(existing_ids))
+
+
+def _log_phase_summary(scan_start: float,
+                       t_p1: float, t_p2: float, t_p3: float, t_p4: float,
+                       t_p5: float, t_p6: float, t_p7: float,
+                       stadiums: int, races: int,
+                       entries: int, predictions: int, skipped: int) -> None:
+    """フェーズ別処理時間のサマリをログ出力"""
+    total = time.monotonic() - scan_start
     logger.info("=== Morning Scan 完了 ===")
-    logger.info("開催場: %d場 / 処理レース: %d / 保存: %d / スキップ: %d / 経過: %.0f秒",
-                len(stadiums), total_races, total_saved, total_skipped, total_elapsed)
-    # GitHub Actions サマリ出力
-    entries_saved = total_saved * 6  # 1レース6艇
-    logger.info("--- サマリ ---")
-    logger.info("races 保存/更新: %d件", total_races)
-    logger.info("entries 保存/更新: %d件", entries_saved)
-    logger.info("predictions 保存: %d件 (スキップ含む全保存は %d件)",
-                total_saved, total_saved + total_skipped)
+    logger.info("開催場:%d / races:%d / entries:%d / predictions:%d / スキップ:%d",
+                stadiums, races, entries, predictions, skipped)
+    logger.info("--- フェーズ別処理時間 ---")
+    logger.info("  [P1] 開催場一覧取得  : %6.1f秒", t_p1)
+    logger.info("  [P2] レース一覧取得  : %6.1f秒  (並列%d)", t_p2, MAX_RACE_LIST_WORKERS)
+    logger.info("  [P3] races upsert   : %6.1f秒", t_p3)
+    logger.info("  [P4] entries既存確認 : %6.1f秒", t_p4)
+    logger.info("  [P5] 出走表取得      : %6.1f秒  (並列%d)", t_p5, MAX_ENTRY_WORKERS)
+    logger.info("  [P6] entries保存     : %6.1f秒", t_p6)
+    logger.info("  [P7] predictions保存 : %6.1f秒", t_p7)
+    logger.info("  合計                 : %6.0f秒  (%.1f分)",
+                total, total / 60)
 
 
 def pre_race_scan(today: date, minutes_before: int = 10) -> None:
