@@ -92,21 +92,26 @@ export default async function OpsPage() {
 
       {/* ── 今日の処理状況 ─────────────────────────── */}
       <Section title="今日の処理状況">
-        <Row label="races 登録数"      value={`${ops.racesTotal} 件`} />
-        <Row label="entries 登録数"     value={`${ops.entriesTotal} 件`}
-          sub={ops.racesTotal > 0 ? `(${ops.racesTotal}R × 6艇)` : undefined}
+        <Row label="今日の全レース数"   value={`${ops.racesTotal} 件`} />
+        <Row label="詳細取得済み"       value={`${ops.entriesTotal / 6 | 0} / ${ops.racesTotal} レース`}
+          sub="(entries ÷ 6艇)"
+          warn={ops.entriesTotal === 0 && ops.racesTotal > 0}
         />
-        <Row label="predictions 登録数" value={`${ops.predictionsTotal} 件`} />
+        <Row label="展示取得済み"       value={`${ops.exhibitionCount} / ${ops.predictionsTotal} 件`}
+          warn={ops.exhibitionCount < ops.predictionsTotal && ops.predictionsTotal > 0}
+        />
+        <Row label="予想未作成"         value={`${ops.unevaluatedCount} 件`}
+          warn={ops.unevaluatedCount > 0}
+        />
         <Row label="results 登録数"     value={`${ops.resultsTotal} 件`} />
         <div className="border-t pt-2 mt-2 space-y-2">
           <Row
-            label="展示済みレース数"
-            value={`${ops.exhibitionCount} / ${ops.predictionsTotal}`}
-            warn={ops.exhibitionCount < ops.predictionsTotal}
+            label="直前処理済み (predictions)"
+            value={`${ops.predictionsTotal} / ${ops.racesTotal}`}
           />
-          <Bar value={ops.exhibitionCount} max={ops.predictionsTotal} color="bg-green-400" />
+          <Bar value={ops.predictionsTotal} max={ops.racesTotal} color="bg-green-400" />
           <Row
-            label="結果確定済みレース数"
+            label="結果確定済み"
             value={`${ops.finishedCount} / ${ops.racesTotal}`}
           />
           <Bar value={ops.finishedCount} max={ops.racesTotal} color="bg-blue-400" />
@@ -119,14 +124,22 @@ export default async function OpsPage() {
           <span className="flex-1 bg-red-50 border border-red-200 rounded-lg p-2 text-center">
             <div className="text-xs text-red-500 font-semibold">BUY</div>
             <div className="text-2xl font-black text-red-600">{ops.buyCount}</div>
+            <div className="text-xs text-red-400">投票候補</div>
           </span>
           <span className="flex-1 bg-orange-50 border border-orange-200 rounded-lg p-2 text-center">
             <div className="text-xs text-orange-500 font-semibold">CANDIDATE</div>
             <div className="text-2xl font-black text-orange-500">{ops.candidateCount}</div>
+            <div className="text-xs text-orange-400">投票候補</div>
+          </span>
+          <span className="flex-1 bg-blue-50 border border-blue-200 rounded-lg p-2 text-center">
+            <div className="text-xs text-blue-500 font-semibold">WATCH</div>
+            <div className="text-2xl font-black text-blue-500">{ops.watchCount}</div>
+            <div className="text-xs text-blue-400">検証候補</div>
           </span>
           <span className="flex-1 bg-gray-50 border border-gray-200 rounded-lg p-2 text-center">
             <div className="text-xs text-gray-400 font-semibold">SKIP</div>
             <div className="text-2xl font-black text-gray-400">{ops.skipCount}</div>
+            <div className="text-xs text-gray-300">非対象</div>
           </span>
         </div>
         <Row label="最大 confidence" value={`${allConf.toFixed(1)} 点`} />

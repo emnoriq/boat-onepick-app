@@ -185,34 +185,38 @@ def gap_between_3rd_4th(scores: list[EntryScore]) -> float:
 
 def decide(scores: list[EntryScore], condition: RaceCondition) -> dict:
     """
-    買い / 候補 / 見送り 判定
+    買い / 候補 / ウォッチ / 見送り 判定
+
+    decision は "buy" | "candidate" | "skip" の3値 (DB制約を維持)。
+    watch は decision="skip" の一部で、reason に "[watch]" マーカーを付与。
+    フロントエンドは reason の "[watch]" を検出して表示を切り替える。
 
     # ===== MVP検証用の暫定閾値（30日分データ蓄積後に再調整する） =====
-    # confidence = avg_top3 × (1 + gap/200) の公式で計算。
-    # 全スコアが100点満点でもavg_top3≈75が現実的上限のため、
-    # 旧閾値(92/88)は未達成。現実のスコア分布に合わせて70/62に変更。
-    # buy:       confidence ≥ 70 かつ gap ≥ 10
-    # candidate: confidence ≥ 62 かつ gap ≥ 7
-    # skip:      それ未満
+    # confidence = avg_top3 × (1 + gap/200)。avg_top3 の現実的上限 ≈ 75。
+    # buy:       confidence ≥ 70 かつ gap ≥ 10  (S ランク)
+    # candidate: confidence ≥ 62 かつ gap ≥ 7   (A ランク)
+    # watch:     confidence ≥ 55 かつ gap ≥ 7   (B ランク, decision=skip)
+    # skip:      それ未満                         (C ランク)
     # ==============================================================
 
     Returns:
         {
-            "pick": "1-2-4",
+            "pick":       "1-2-4",
             "confidence": 65.0,
-            "decision": "buy" | "candidate" | "skip",
-            "rank": "S" | "A" | "B" | "C",
-            "reason": [...],
-            "gap": 12.5,
+            "decision":   "buy" | "candidate" | "skip",
+            "is_watch":   False,   # True = watch 候補 (decision=skip のまま)
+            "rank":       "S" | "A" | "B" | "C",
+            "reason":     [...],   # "[watch]" が含まれる場合は watch 候補
+            "gap":        12.5,
         }
     """
     gap = gap_between_3rd_4th(scores)
     pick = make_pick(scores)
     reasons: list[str] = []
 
-    # 風・波が荒れているか
-    wind_rough = condition.wind_speed >= 5.0
-    wave_rough = condition.wave_height >= 15.0
+    # 荒れ条件チェック
+    wind_rough      = condition.wind_speed  >= 5.0
+    wave_rough      = condition.wave_height >= 15.0
     approach_unstable = not condition.approach_stable
 
     if wind_rough:
@@ -222,43 +226,44 @@ def decide(scores: list[EntryScore], condition: RaceCondition) -> dict:
     if approach_unstable:
         reasons.append("進入が乱れる可能性あり")
 
-    # 上位3艇の信頼度 = 上位3艇の平均スコアと差を総合
-    avg_top3 = sum(s.total for s in scores[:3]) / 3 if scores else 0.0
+    avg_top3   = sum(s.total for s in scores[:3]) / 3 if scores else 0.0
     confidence = min(100.0, avg_top3 * (1 + gap / 200))
-
-    # 朝スキャン / 直前スキャンの区別 (exhibition_time があれば直前済み)
-    has_exhibition = any(s.pre_race_score > 0 for s in scores)
-
-    # 決定 (暫定閾値: buy≥70&gap≥10, candidate≥62&gap≥7)
     forced_skip = wind_rough or wave_rough or approach_unstable
+
+    is_watch = False
 
     if not forced_skip and confidence >= 70 and gap >= 10:
         decision = "buy"
         rank = "S"
         reasons.append(f"上位3艇のスコア差が明確 (gap={gap:.1f})")
-        if not has_exhibition:
-            reasons.append("朝スキャン暫定 — 直前情報で変動あり")
+
     elif not forced_skip and confidence >= 62 and gap >= 7:
         decision = "candidate"
         rank = "A"
         reasons.append(f"上位3艇が安定 (gap={gap:.1f})")
-        if not has_exhibition:
-            reasons.append("朝スキャン暫定 — 直前情報で変動あり")
-    elif confidence >= 55:
-        decision = "skip"
-        rank = "B"
-        reasons.append(f"3〜4番手の差が不十分 (gap={gap:.1f})")
+
+    elif not forced_skip and confidence >= 55 and gap >= 7:
+        # watch: 実投票対象外、検証候補
+        decision  = "skip"
+        rank      = "B"
+        is_watch  = True
+        reasons.append(f"[watch] 検証候補 — gap={gap:.1f} / conf={round(confidence, 1)}")
+
     else:
         decision = "skip"
         rank = "C"
-        reasons.append(f"上位候補が絞れていない (gap={gap:.1f})")
+        if forced_skip:
+            reasons.append(f"荒れ条件のため見送り (gap={gap:.1f})")
+        else:
+            reasons.append(f"上位候補が絞れていない (gap={gap:.1f})")
 
     return {
-        "pick": pick,
+        "pick":       pick,
         "confidence": round(confidence, 2),
-        "decision": decision,
-        "rank": rank,
-        "reason": reasons,
-        "scores": [s.to_dict() for s in scores],
-        "gap": round(gap, 2),
+        "decision":   decision,
+        "is_watch":   is_watch,
+        "rank":       rank,
+        "reason":     reasons,
+        "scores":     [s.to_dict() for s in scores],
+        "gap":        round(gap, 2),
     }

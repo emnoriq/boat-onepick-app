@@ -108,6 +108,7 @@ export type DebugRow = {
   pick: string;
   confidence: number;
   decision: "buy" | "candidate" | "skip";
+  is_watch: boolean;   // decision=skip かつ reason に "[watch]" を含む検証候補
   reason: string | null;
   gap: number | null;
   has_exhibition: boolean;
@@ -118,8 +119,44 @@ export type DebugRow = {
   prediction_hit: boolean | null;
 };
 
+/** reason テキストから gap 値を抽出 (例: "gap=4.1" → 4.1) */
+function extractGap(reason: string): number | null {
+  const m = reason.match(/gap=([\d.]+)/);
+  return m ? parseFloat(m[1]) : null;
+}
+
+/**
+ * watch 候補かどうかを判定する
+ * - reason に "[watch]" マーカーがある場合 (新設計: pre_race_scan から)
+ * - または confidence ≥ 55 AND gap ≥ 7 AND skip AND 荒れ要因なし (旧データ互換)
+ */
+export function isWatchCandidate(
+  decision: string,
+  confidence: number,
+  reason: string | null,
+): boolean {
+  if (!reason) return false;
+  // 新設計: "[watch]" マーカーで判定
+  if (reason.includes("[watch]")) return true;
+  // 旧データ互換: confidence/gap から推定
+  if (decision !== "skip") return false;
+  if (confidence < 55) return false;
+  if (reason.includes("荒れ要因") || reason.includes("進入が乱れ")) return false;
+  const gap = extractGap(reason);
+  return gap !== null && gap >= 7;
+}
+
+/**
+ * 展示データ取得済みかどうかを判定
+ * - 旧設計: "朝スキャン暫定" がなければ展示済み
+ * - 新設計: "[展示未取得]" がなければ展示済み (pre_race のみが prediction を作成)
+ */
+function hasExhibitionData(reason: string | null): boolean {
+  if (!reason) return false;
+  return !reason.includes("朝スキャン暫定") && !reason.includes("[展示未取得]");
+}
+
 export async function getDebugPredictions(date: string): Promise<DebugRow[]> {
-  // getTodayPredictions と同じ races 起点クエリを使う (実績ある構造)
   const { data, error } = await db()
     .from("races")
     .select(`*, predictions(*), results(*)`)
@@ -133,19 +170,19 @@ export async function getDebugPredictions(date: string): Promise<DebugRow[]> {
     const pred = race.predictions as Prediction | null;
     if (!pred) continue;
     const reasonText: string = pred.reason ?? "";
-    const gapMatch = reasonText.match(/gap=([\d.]+)/);
     const result = race.results as RaceResult | null;
     rows.push({
-      race_id:        race.id,
-      stadium:        race.stadium,
-      race_no:        race.race_no,
-      close_time:     race.close_time,
-      pick:           pred.pick,
-      confidence:     pred.confidence,
-      decision:       pred.decision,
-      reason:         reasonText,
-      gap:            gapMatch ? parseFloat(gapMatch[1]) : null,
-      has_exhibition: !reasonText.includes("朝スキャン暫定"),
+      race_id:         race.id,
+      stadium:         race.stadium,
+      race_no:         race.race_no,
+      close_time:      race.close_time,
+      pick:            pred.pick,
+      confidence:      pred.confidence,
+      decision:        pred.decision,
+      is_watch:        isWatchCandidate(pred.decision, pred.confidence, reasonText),
+      reason:          reasonText,
+      gap:             extractGap(reasonText),
+      has_exhibition:  hasExhibitionData(reasonText),
       trifecta_result: result?.trifecta_result ?? null,
       payout:          result?.payout ?? null,
       popularity:      result?.popularity ?? null,
@@ -154,7 +191,7 @@ export async function getDebugPredictions(date: string): Promise<DebugRow[]> {
   }
 
   rows.sort((a, b) => Number(b.confidence) - Number(a.confidence));
-  return rows.slice(0, 50);
+  return rows.slice(0, 100);
 }
 
 export async function getStats() {
@@ -213,15 +250,17 @@ export async function getStats() {
 export type OpsData = {
   date: string;
   // 処理状況
-  racesTotal: number;
-  entriesTotal: number;
-  predictionsTotal: number;
+  racesTotal: number;        // 今日の全レース数
+  entriesTotal: number;      // entries 登録済みレース数
+  predictionsTotal: number;  // predictions 登録済み (pre_race 処理済み)
+  unevaluatedCount: number;  // まだ予想未作成のレース数
+  exhibitionCount: number;   // 展示データ取得済み
+  finishedCount: number;     // status = finished
   resultsTotal: number;
-  exhibitionCount: number;  // 展示済みレース数 (pre_race 取得済み)
-  finishedCount: number;    // status = finished
   // 判定状況
   buyCount: number;
   candidateCount: number;
+  watchCount: number;   // skip だが検証候補 (is_watch)
   skipCount: number;
   maxConf: number;
   avgConf: string;
@@ -269,6 +308,7 @@ export async function getOpsData(date: string): Promise<OpsData> {
   let finishedCount = 0;
   let buyCount = 0;
   let candidateCount = 0;
+  let watchCount = 0;
   let skipCount = 0;
   let confSum = 0;
   let maxConf = 0;
@@ -280,7 +320,6 @@ export async function getOpsData(date: string): Promise<OpsData> {
   for (const race of raceList) {
     if (race.status === "finished") finishedCount++;
 
-    // updated_at の最大値
     if (race.updated_at) {
       const d = new Date(race.updated_at);
       if (!lastUpdated || d > lastUpdated) lastUpdated = d;
@@ -292,11 +331,23 @@ export async function getOpsData(date: string): Promise<OpsData> {
       const conf = Number(pred.confidence);
       confSum += conf;
       if (conf > maxConf) maxConf = conf;
-      if (pred.decision === "buy") buyCount++;
-      else if (pred.decision === "candidate") candidateCount++;
-      else skipCount++;
-      // 展示済み = reason に "朝スキャン暫定" がない
-      if (pred.reason && !pred.reason.includes("朝スキャン暫定")) exhibitionCount++;
+
+      if (pred.decision === "buy") {
+        buyCount++;
+      } else if (pred.decision === "candidate") {
+        candidateCount++;
+      } else {
+        // skip: watch か純粋な skip かを判定
+        if (isWatchCandidate(pred.decision, conf, pred.reason ?? "")) {
+          watchCount++;
+        } else {
+          skipCount++;
+        }
+      }
+
+      // 展示済み判定 (新旧両方のマーカーに対応)
+      if (hasExhibitionData(pred.reason)) exhibitionCount++;
+
       if (pred.is_hit !== null && pred.is_hit !== undefined) {
         verifiedTotal++;
         if (pred.is_hit) hitCount++;
@@ -323,14 +374,16 @@ export async function getOpsData(date: string): Promise<OpsData> {
 
   return {
     date,
-    racesTotal:  raceList.length,
+    racesTotal:       raceList.length,
     entriesTotal,
     predictionsTotal,
+    unevaluatedCount: raceList.length - predictionsTotal,
     resultsTotal,
     exhibitionCount,
     finishedCount,
     buyCount,
     candidateCount,
+    watchCount,
     skipCount,
     maxConf,
     avgConf,
@@ -344,4 +397,62 @@ export async function getOpsData(date: string): Promise<OpsData> {
       ? lastUpdated.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })
       : null,
   };
+}
+
+// ─── /bet・/schedule 向けの候補取得関数 ─────────────────────────────────────
+
+export type WatchCandidate = {
+  race_id: string;
+  stadium: string;
+  race_no: number;
+  close_time: string;
+  pick: string;
+  confidence: number;
+  decision: "buy" | "candidate" | "skip";
+  is_watch: boolean;
+  gap: number | null;
+  reason: string | null;
+};
+
+/**
+ * 今日の投票候補 (buy / candidate) と検証候補 (watch) を取得する。
+ * 将来の /bet・/schedule ページで使用予定。
+ * skip (非watch) は除外。
+ */
+export async function getWatchCandidates(date: string): Promise<WatchCandidate[]> {
+  const { data, error } = await db()
+    .from("races")
+    .select(`id, stadium, race_no, close_time, predictions(pick, confidence, decision, reason)`)
+    .eq("race_date", date)
+    .order("close_time", { ascending: true });
+
+  if (error) throw error;
+
+  const result: WatchCandidate[] = [];
+  for (const race of (data ?? []) as any[]) {
+    const pred = race.predictions as any | null;
+    if (!pred) continue;
+
+    const decision: string = pred.decision;
+    const confidence: number = Number(pred.confidence);
+    const reason: string = pred.reason ?? "";
+    const isWatch = isWatchCandidate(decision, confidence, reason);
+
+    // buy / candidate は常に含む。skip は watch のみ含む。
+    if (decision === "skip" && !isWatch) continue;
+
+    result.push({
+      race_id:    race.id,
+      stadium:    race.stadium,
+      race_no:    race.race_no,
+      close_time: race.close_time,
+      pick:       pred.pick,
+      confidence,
+      decision:   decision as "buy" | "candidate" | "skip",
+      is_watch:   isWatch,
+      gap:        extractGap(reason),
+      reason:     reason || null,
+    });
+  }
+  return result;
 }

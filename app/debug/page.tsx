@@ -11,11 +11,19 @@ function todayJST(): string {
   }).replace(/\//g, "-");
 }
 
-const DECISION_STYLE: Record<string, string> = {
-  buy:       "bg-red-100 text-red-700 font-bold",
-  candidate: "bg-orange-100 text-orange-700 font-semibold",
-  skip:      "bg-gray-100 text-gray-500",
-};
+function DecisionBadge({ decision, isWatch }: { decision: string; isWatch: boolean }) {
+  if (decision === "buy")
+    return <span className="px-1.5 py-0.5 rounded text-xs bg-red-100 text-red-700 font-bold">buy</span>;
+  if (decision === "candidate")
+    return <span className="px-1.5 py-0.5 rounded text-xs bg-orange-100 text-orange-700 font-semibold">candidate</span>;
+  if (isWatch)
+    return (
+      <span className="px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-700 font-semibold">
+        watch
+      </span>
+    );
+  return <span className="px-1.5 py-0.5 rounded text-xs bg-gray-100 text-gray-500">skip</span>;
+}
 
 function HitBadge({ hit }: { hit: boolean | null }) {
   if (hit === null) return <span className="text-xs text-gray-300">未確定</span>;
@@ -28,8 +36,13 @@ export default async function DebugPage() {
   const today = todayJST();
   const rows = await getDebugPredictions(today);
 
-  const byDecision = { buy: 0, candidate: 0, skip: 0 };
-  for (const r of rows) byDecision[r.decision] = (byDecision[r.decision] ?? 0) + 1;
+  const byDecision = { buy: 0, candidate: 0, watch: 0, skip: 0 };
+  for (const r of rows) {
+    if (r.decision === "buy") byDecision.buy++;
+    else if (r.decision === "candidate") byDecision.candidate++;
+    else if (r.is_watch) byDecision.watch++;
+    else byDecision.skip++;
+  }
 
   const maxConf = rows.length > 0 ? Math.max(...rows.map(r => Number(r.confidence))) : 0;
   const avgConf = rows.length > 0
@@ -52,7 +65,7 @@ export default async function DebugPage() {
       {/* 判定基準 */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4 text-sm">
         <p className="font-semibold text-blue-800 mb-2">現在の判定基準（暫定 — MVP30日検証後に再調整）</p>
-        <div className="grid grid-cols-3 gap-2 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
           <div className="bg-red-100 rounded p-2">
             <p className="font-bold text-red-700">Sランク BUY</p>
             <p className="text-red-600">confidence ≥ 70</p>
@@ -62,6 +75,12 @@ export default async function DebugPage() {
             <p className="font-bold text-orange-700">Aランク CANDIDATE</p>
             <p className="text-orange-600">confidence ≥ 62</p>
             <p className="text-orange-600">gap ≥ 7点</p>
+          </div>
+          <div className="bg-blue-100 rounded p-2">
+            <p className="font-bold text-blue-700">Bランク WATCH</p>
+            <p className="text-blue-600">confidence ≥ 55</p>
+            <p className="text-blue-600">gap ≥ 7点</p>
+            <p className="text-blue-500 mt-0.5">検証候補・投票対象外</p>
           </div>
           <div className="bg-gray-100 rounded p-2">
             <p className="font-bold text-gray-600">SKIP</p>
@@ -77,6 +96,7 @@ export default async function DebugPage() {
       <div className="flex flex-wrap gap-3 mb-4 text-sm">
         <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded">buy: {byDecision.buy}</span>
         <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded">candidate: {byDecision.candidate}</span>
+        <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded">watch: {byDecision.watch}</span>
         <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded">skip: {byDecision.skip}</span>
         <span className="bg-white border px-2 py-0.5 rounded text-gray-600">最大 conf: {maxConf.toFixed(1)}</span>
         <span className="bg-white border px-2 py-0.5 rounded text-gray-600">平均 conf: {avgConf}</span>
@@ -137,9 +157,7 @@ export default async function DebugPage() {
                   </span>
                 </td>
                 <td className="px-2 py-1.5 border text-center">
-                  <span className={`px-1.5 py-0.5 rounded text-xs ${DECISION_STYLE[r.decision] ?? ""}`}>
-                    {r.decision}
-                  </span>
+                  <DecisionBadge decision={r.decision} isWatch={r.is_watch} />
                 </td>
                 <td className="px-2 py-1.5 border font-mono">{r.pick}</td>
                 <td className="px-2 py-1.5 border font-mono text-center">

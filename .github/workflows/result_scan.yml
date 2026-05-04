@@ -62,7 +62,7 @@ jobs:
             echo "force       : $FORCE"
           else
             echo "mode        : result"
-            echo "実行モード  : full (status=final のレースを自動選択)"
+            echo "実行モード  : full (締切10分超過・未完了レースを自動選択)"
             echo "date        : $TARGET_DATE"
           fi
 

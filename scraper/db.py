@@ -102,6 +102,38 @@ def get_races_near_close(db: Client, race_date: date, minutes_before: int = 10) 
     return res.data
 
 
+def get_entries_by_race_ids(db: Client, race_ids: list[str]) -> dict[str, list[dict]]:
+    """複数レースの entries を一括取得して {race_id: [entry_dict, ...]} を返す"""
+    if not race_ids:
+        return {}
+    res = (db.table("entries")
+           .select("*")
+           .in_("race_id", race_ids)
+           .execute())
+    result: dict[str, list[dict]] = {}
+    for row in (res.data or []):
+        result.setdefault(row["race_id"], []).append(row)
+    return result
+
+
+def get_races_for_result_scan(db: Client, today: date,
+                              minutes_after: int = 10) -> list[dict]:
+    """
+    締切から minutes_after 分以上経過した未確定レース一覧を返す。
+    (status=finished のレースと、既に results が存在するレースは除外しない
+     — 呼び出し側で results の有無を確認してスキップすること)
+    """
+    now    = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(minutes=minutes_after)).isoformat()
+    res = (db.table("races")
+           .select("*")
+           .eq("race_date", today.isoformat())
+           .neq("status", "finished")
+           .lt("close_time", cutoff)
+           .execute())
+    return res.data or []
+
+
 def get_race_ids_with_entries(db: Client, race_ids: list[str]) -> set[str]:
     """entries が既に存在する race_id の集合を返す（スキップ判定用）"""
     if not race_ids:

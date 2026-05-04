@@ -19,9 +19,9 @@ on:
 jobs:
   morning-scan:
     runs-on: ubuntu-latest
-    # 並列化後の想定: 全件新規 ≈ 8-10分。並列化前実績 41分40秒。
-    # 万一の retryや多場対応のバッファ込みで 60分。
-    timeout-minutes: 60
+    # 新設計: races のみ保存 (entries/predictions は Pre-Race Scan)
+    # 全場 (18場) で 1-3 分程度。バッファ込みで 10 分。
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4

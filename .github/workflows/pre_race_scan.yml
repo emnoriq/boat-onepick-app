@@ -55,7 +55,7 @@ jobs:
             echo "force       : $FORCE"
           else
             echo "mode        : pre_race"
-            echo "実行モード  : full (締切 10 分前のレースを自動選択)"
+            echo "実行モード  : full (締切 45 分前のレースを自動選択)"
           fi
 
       - name: Run pre-race scan
