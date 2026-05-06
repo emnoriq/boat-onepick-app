@@ -53,17 +53,46 @@ def bulk_upsert_entries(db: Client, entries: list[dict]) -> None:
     db.table("entries").upsert(entries, on_conflict="race_id,lane").execute()
 
 
+def _strip_unknown_columns(payload: dict, known_err_msg: str) -> dict:
+    """
+    カラム未存在エラー時にペイロードから未知カラムを除去して返す。
+    PostgreSQL エラー: 'column "xxx" of relation "predictions" does not exist'
+    """
+    import re
+    m = re.search(r'column "([^"]+)" of relation', known_err_msg)
+    if m:
+        col = m.group(1)
+        return {k: v for k, v in payload.items() if k != col}
+    return payload
+
+
 def upsert_prediction(db: Client, race_id: str, prediction: dict) -> None:
-    """予想を登録または更新"""
+    """予想を登録または更新。未存在カラムがあれば除去してリトライ。"""
     data = {**prediction, "race_id": race_id}
-    db.table("predictions").upsert(data, on_conflict="race_id").execute()
+    try:
+        db.table("predictions").upsert(data, on_conflict="race_id").execute()
+    except Exception as e:
+        err = str(e)
+        if "does not exist" in err:
+            data2 = _strip_unknown_columns(data, err)
+            db.table("predictions").upsert(data2, on_conflict="race_id").execute()
+        else:
+            raise
 
 
 def bulk_upsert_predictions(db: Client, predictions: list[dict]) -> None:
-    """複数予想をまとめて upsert（スタジアム単位でまとめる）"""
+    """複数予想をまとめて upsert。未存在カラムがあれば除去してリトライ。"""
     if not predictions:
         return
-    db.table("predictions").upsert(predictions, on_conflict="race_id").execute()
+    try:
+        db.table("predictions").upsert(predictions, on_conflict="race_id").execute()
+    except Exception as e:
+        err = str(e)
+        if "does not exist" in err:
+            stripped = [_strip_unknown_columns(p, err) for p in predictions]
+            db.table("predictions").upsert(stripped, on_conflict="race_id").execute()
+        else:
+            raise
 
 
 def upsert_result(db: Client, race_id: str, result: dict) -> None:

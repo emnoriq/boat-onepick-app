@@ -228,26 +228,44 @@ def decide(scores: list[EntryScore], condition: RaceCondition) -> dict:
 
     avg_top3   = sum(s.total for s in scores[:3]) / 3 if scores else 0.0
     confidence = min(100.0, avg_top3 * (1 + gap / 200))
+
+    # ── 1号艇インコース補正 ────────────────────────────────────────────────
+    # ボートレース三連複において 1号艇1着率は約50〜55%。
+    # 1号艇がスコア上位なら信頼度UP、pick外なら波乱リスクとして DOWN。
+    lane1_rank = next((i for i, s in enumerate(scores) if s.lane == 1), -1)
+    if lane1_rank == 0:    # 1号艇1位 → 逃げ期待大
+        lane1_mul = 1.08
+    elif lane1_rank == 1:  # 2位 → 差し展開
+        lane1_mul = 1.04
+    elif lane1_rank == 2:  # 3位 → pick内ギリギリ
+        lane1_mul = 1.00
+    else:                  # 4位以下（pick外）→ 大波乱リスク
+        lane1_mul = 0.90
+    confidence = min(100.0, confidence * lane1_mul)
+
     forced_skip = wind_rough or wave_rough or approach_unstable
 
     is_watch = False
 
+    # 1号艇ランクを reason に記録（デバッグ・検証用）
+    lane1_label = ["1位", "2位", "3位", "4位以下"][min(lane1_rank, 3)] if lane1_rank >= 0 else "不明"
+
     if not forced_skip and confidence >= 70 and gap >= 10:
         decision = "buy"
         rank = "S"
-        reasons.append(f"上位3艇のスコア差が明確 (gap={gap:.1f})")
+        reasons.append(f"上位3艇のスコア差が明確 (gap={gap:.1f} / 1号艇{lane1_label})")
 
     elif not forced_skip and confidence >= 62 and gap >= 7:
         decision = "candidate"
         rank = "A"
-        reasons.append(f"上位3艇が安定 (gap={gap:.1f})")
+        reasons.append(f"上位3艇が安定 (gap={gap:.1f} / 1号艇{lane1_label})")
 
     elif not forced_skip and confidence >= 55 and gap >= 7:
         # watch: 実投票対象外、検証候補
         decision  = "skip"
         rank      = "B"
         is_watch  = True
-        reasons.append(f"[watch] 検証候補 — gap={gap:.1f} / conf={round(confidence, 1)}")
+        reasons.append(f"[watch] 検証候補 — gap={gap:.1f} / conf={round(confidence, 1)} / 1号艇{lane1_label}")
 
     else:
         decision = "skip"
@@ -255,7 +273,7 @@ def decide(scores: list[EntryScore], condition: RaceCondition) -> dict:
         if forced_skip:
             reasons.append(f"荒れ条件のため見送り (gap={gap:.1f})")
         else:
-            reasons.append(f"上位候補が絞れていない (gap={gap:.1f})")
+            reasons.append(f"上位候補が絞れていない (gap={gap:.1f} / 1号艇{lane1_label})")
 
     return {
         "pick":       pick,

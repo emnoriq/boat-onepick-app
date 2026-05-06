@@ -312,6 +312,7 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
             "confidence": pred["confidence"],
             "decision":   pred["decision"],
             "reason":     "\n".join(reason_lines),
+            "gap":        pred["gap"],   # DB に gap カラムがなければ db.py が自動リトライ
         })
         race_ids_to_finalize.append(race_id)
 
@@ -420,6 +421,7 @@ def pre_race_scan_single(today: date, stadium_name: str, race_no: int) -> None:
         "confidence": pred["confidence"],
         "decision":   pred["decision"],
         "reason":     "\n".join(reason_lines),
+        "gap":        pred["gap"],   # DB に gap カラムがなければ db.py が自動リトライ
     })
     mark_race_final(db, race_id)
 

@@ -42,6 +42,7 @@ export type Prediction = {
   confidence: number;
   decision: "buy" | "candidate" | "skip";
   reason: string | null;
+  gap: number | null;       // 3位-4位スコア差（新設計から保存）
   rank_today: number | null;
   is_hit: boolean | null;
 };
@@ -181,7 +182,7 @@ export async function getDebugPredictions(date: string): Promise<DebugRow[]> {
       decision:        pred.decision,
       is_watch:        isWatchCandidate(pred.decision, pred.confidence, reasonText),
       reason:          reasonText,
-      gap:             extractGap(reasonText),
+      gap:             (pred as any).gap ?? extractGap(reasonText),
       has_exhibition:  hasExhibitionData(reasonText),
       trifecta_result: result?.trifecta_result ?? null,
       payout:          result?.payout ?? null,
@@ -450,7 +451,7 @@ export async function getWatchCandidates(date: string): Promise<WatchCandidate[]
       confidence,
       decision:   decision as "buy" | "candidate" | "skip",
       is_watch:   isWatch,
-      gap:        extractGap(reason),
+      gap:        (pred as any).gap ?? extractGap(reason),
       reason:     reason || null,
     });
   }
@@ -519,7 +520,7 @@ export async function getScheduleData(date: string): Promise<{
 
     const reasonText: string | null = pred?.reason ?? null;
     const conf: number | null       = pred ? Number(pred.confidence) : null;
-    const gap                       = reasonText ? extractGap(reasonText) : null;
+    const gap                       = (pred as any)?.gap ?? (reasonText ? extractGap(reasonText) : null);
     const isWatch                   = pred
       ? isWatchCandidate(pred.decision, conf!, reasonText)
       : false;
