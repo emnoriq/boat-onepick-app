@@ -5,10 +5,9 @@ name: Result Scan
 
 on:
   schedule:
-    # 10:00〜16:45 JST (UTC 01:00〜07:45) — 15分おき
-    - cron: "*/15 1-7 * * *"
-    # 17:00 JST (UTC 08:00) — 最終回
-    - cron: "0 8 * * *"
+    # 09:30〜23:00 JST = UTC 00:30〜14:00 — 30分おき（夜レース対応）
+    - cron: "30 0-13 * * *"
+    - cron: "0 1-14 * * *"
   workflow_dispatch:
     inputs:
       stadium:

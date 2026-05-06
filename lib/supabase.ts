@@ -196,53 +196,104 @@ export async function getDebugPredictions(date: string): Promise<DebugRow[]> {
 }
 
 export async function getStats() {
-  // predictions.is_hit が確定したレースを対象に集計
-  const { data: preds } = await db()
-    .from("predictions")
-    .select("decision, is_hit, confidence, race_id")
-    .not("is_hit", "is", null);
+  const client = db();
 
-  if (!preds) return null;
+  // predictions + results を JOIN して全件取得
+  const { data: races } = await client
+    .from("races")
+    .select("id, predictions(*), results(*)")
+    .not("predictions", "is", null);
 
-  // 的中レースの払戻金合計 (ROI 計算用)
-  const hitRaceIds = preds
-    .filter((d) => d.is_hit)
-    .map((d) => d.race_id);
+  if (!races) return null;
 
-  let payoutTotal = 0;
-  if (hitRaceIds.length > 0) {
-    const { data: resultRows } = await db()
-      .from("results")
-      .select("payout")
-      .in("race_id", hitRaceIds);
-    payoutTotal = (resultRows ?? []).reduce(
-      (sum, r) => sum + (r.payout ?? 0), 0
-    );
+  type Row = {
+    confidence: number;
+    decision: string;
+    reason: string | null;
+    gap: number | null;
+    hit: boolean | null;
+    payout: number;
+    hasExhibition: boolean;
+  };
+
+  const rows: Row[] = [];
+  for (const race of races as any[]) {
+    const pred = race.predictions;
+    const res  = race.results;
+    if (!pred) continue;
+    const hit = res?.prediction_hit ?? pred.is_hit ?? null;
+    rows.push({
+      confidence:   Number(pred.confidence) || 0,
+      decision:     pred.decision || "skip",
+      reason:       pred.reason || "",
+      gap:          pred.gap ?? null,
+      hit,
+      payout:       res?.payout || 0,
+      hasExhibition: !(pred.reason || "").includes("[展示未取得]"),
+    });
   }
 
-  const total = preds.length;
-  const hit   = preds.filter((d) => d.is_hit).length;
-  const sRank = preds.filter((d) => d.decision === "buy");
-  const aRank = preds.filter((d) => d.decision === "candidate");
-  const sHit  = sRank.filter((d) => d.is_hit).length;
-  const aHit  = aRank.filter((d) => d.is_hit).length;
+  const confirmed = rows.filter(r => r.hit !== null);
+  if (confirmed.length === 0) return null;
 
-  const investTotal = total * 100;                        // 1点100円
-  const roi = investTotal > 0
-    ? ((payoutTotal / investTotal) * 100).toFixed(1)
-    : "0.0";
+  const hitRows   = confirmed.filter(r => r.hit);
+  const total     = confirmed.length;
+  const hitCount  = hitRows.length;
+  const payoutTotal  = hitRows.reduce((s, r) => s + r.payout, 0);
+  const investTotal  = total * 100;
+  const roi = investTotal > 0 ? ((payoutTotal / investTotal) * 100).toFixed(1) : "0.0";
+
+  // ランク別
+  const byDecision = (dec: string) => confirmed.filter(r => r.decision === dec);
+  const watchRows  = confirmed.filter(r => r.decision === "skip" && (r.reason || "").includes("[watch]"));
+  const skipRows   = confirmed.filter(r => r.decision === "skip" && !(r.reason || "").includes("[watch]"));
+
+  const tierStat = (rows: Row[]) => ({
+    count: rows.length,
+    hit:   rows.filter(r => r.hit).length,
+    rate:  rows.length ? ((rows.filter(r => r.hit).length / rows.length) * 100).toFixed(1) : "0.0",
+    roi:   rows.length ? ((rows.filter(r => r.hit).reduce((s, r) => s + r.payout, 0) / (rows.length * 100)) * 100).toFixed(1) : "0.0",
+  });
+
+  // confidence 帯別
+  const confBands = [
+    { label: "≥70",   rows: confirmed.filter(r => r.confidence >= 70) },
+    { label: "62-69", rows: confirmed.filter(r => r.confidence >= 62 && r.confidence < 70) },
+    { label: "55-61", rows: confirmed.filter(r => r.confidence >= 55 && r.confidence < 62) },
+    { label: "<55",   rows: confirmed.filter(r => r.confidence < 55) },
+  ].map(b => ({ label: b.label, ...tierStat(b.rows) }));
+
+  // 展示あり vs なし
+  const withEx   = confirmed.filter(r => r.hasExhibition);
+  const withoutEx = confirmed.filter(r => !r.hasExhibition);
+
+  // 直近7日分の日別的中率（簡易: 全確定レースをまとめて返す — フロントでグループ不要）
+  const sRows  = byDecision("buy");
+  const aRows  = byDecision("candidate");
 
   return {
-    total,
-    hitCount: hit,
-    hitRate: total ? ((hit / total) * 100).toFixed(1) : "0.0",
-    sCount: sRank.length,
-    sHit,
-    aCount: aRank.length,
-    aHit,
-    payoutTotal,
-    investTotal,
-    roi,
+    total, hitCount,
+    hitRate: total ? ((hitCount / total) * 100).toFixed(1) : "0.0",
+    payoutTotal, investTotal, roi,
+    // ランク別
+    sCount: sRows.length, sHit: sRows.filter(r => r.hit).length,
+    sRate: tierStat(sRows).rate, sRoi: tierStat(sRows).roi,
+    aCount: aRows.length, aHit: aRows.filter(r => r.hit).length,
+    aRate: tierStat(aRows).rate, aRoi: tierStat(aRows).roi,
+    watchCount: watchRows.length, watchHit: watchRows.filter(r => r.hit).length,
+    watchRate: tierStat(watchRows).rate,
+    skipCount: skipRows.length, skipHit: skipRows.filter(r => r.hit).length,
+    // confidence帯別
+    confBands,
+    // 展示あり vs なし
+    withExCount: withEx.length,
+    withExHit:   withEx.filter(r => r.hit).length,
+    withExRate:  tierStat(withEx).rate,
+    withExRoi:   tierStat(withEx).roi,
+    withoutExCount: withoutEx.length,
+    withoutExHit:   withoutEx.filter(r => r.hit).length,
+    withoutExRate:  tierStat(withoutEx).rate,
+    withoutExRoi:   tierStat(withoutEx).roi,
   };
 }
 

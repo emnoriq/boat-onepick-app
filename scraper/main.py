@@ -41,6 +41,7 @@ JST = timezone(timedelta(hours=9))
 MAX_RACE_LIST_WORKERS = 4   # fetch_race_list 並列数 (18場)
 MAX_PRE_RACE_WORKERS  = 3   # pre_race 並列数 (窓内 ~5-20R)
 MAX_RESULT_WORKERS    = 5   # result   並列数
+MAX_MORNING_ENTRY_WORKERS = 6   # 朝スキャン用 entry 並列数
 
 
 def _fetch_race_list_worker(args: tuple) -> tuple:
@@ -110,6 +111,23 @@ def _result_worker(args: tuple) -> tuple:
         return (race_id, name, race_no, res)
     except Exception as e:
         logger.error("_result_worker失敗 %s %dR: %s", name, race_no, e)
+        return (race_id, name, race_no, None)
+
+
+def _morning_entry_worker(args: tuple) -> tuple:
+    """
+    Thread worker: 朝スキャン用 — entry取得のみ（展示なし）
+    Returns: (race_id, name, race_no, entry_objects: list[EntryData] | None)
+    """
+    code, name, race_no, race_id, today = args
+    try:
+        entry_objects = fetch_entries(code, race_no, today)
+        if not entry_objects:
+            logger.warning("_morning_entry_worker: 出走表なし %s %dR", name, race_no)
+            return (race_id, name, race_no, None)
+        return (race_id, name, race_no, entry_objects)
+    except Exception as e:
+        logger.warning("_morning_entry_worker失敗 %s %dR: %s", name, race_no, e)
         return (race_id, name, race_no, None)
 
 
@@ -191,14 +209,90 @@ def morning_scan(today: date,
     t_p3 = time.monotonic() - t0
     logger.info("[P3] races upsert (%d件): %.1f秒", len(saved_races), t_p3)
 
+    # ── Phase 4: entries を並列取得 ───────────────────────────────
+    t0 = time.monotonic()
+    entry_worker_args = [
+        (
+            _stadium_name_to_code(r["stadium"]),
+            r["stadium"],
+            r["race_no"],
+            r["id"],
+            today,
+        )
+        for r in saved_races
+    ]
+
+    all_entries_payload: list[dict] = []
+    entry_results: list[tuple] = []  # (race_id, name, race_no, entries)
+
+    with ThreadPoolExecutor(max_workers=MAX_MORNING_ENTRY_WORKERS) as pool:
+        futs = {pool.submit(_morning_entry_worker, a): a for a in entry_worker_args}
+        for fut in as_completed(futs):
+            race_id, name, race_no, entry_objects = fut.result()
+            if not entry_objects:
+                continue
+            entry_results.append((race_id, name, race_no, entry_objects))
+            for e in entry_objects:
+                all_entries_payload.append({
+                    "race_id":           race_id,
+                    "lane":              e.lane,
+                    "racer_name":        e.racer_name,
+                    "racer_class":       e.racer_class,
+                    "national_win_rate": e.national_win_rate,
+                    "local_win_rate":    e.local_win_rate,
+                    "motor_rate":        e.motor_rate,
+                    "boat_rate":         e.boat_rate,
+                    "avg_st":            e.avg_st,
+                })
+
+    t_p4 = time.monotonic() - t0
+    logger.info("[P4] entries 取得 (%d件, 並列%d): %.1f秒 → %d艇",
+                len(entry_results), MAX_MORNING_ENTRY_WORKERS, t_p4, len(all_entries_payload))
+
+    # entries を一括 upsert
+    if all_entries_payload:
+        bulk_upsert_entries(db, all_entries_payload)
+
+    # ── Phase 5: 暫定予想を作成（展示データなし） ─────────────────
+    t0 = time.monotonic()
+    all_predictions_payload: list[dict] = []
+    default_condition = RaceCondition()
+
+    for race_id, name, race_no, entry_objects in entry_results:
+        scores = score_entries(entry_objects, default_condition)
+        pred   = decide(scores, default_condition)
+        all_predictions_payload.append({
+            "race_id":    race_id,
+            "pick":       pred["pick"],
+            "confidence": pred["confidence"],
+            "decision":   pred["decision"],
+            "reason":     "[展示未取得]\n" + "\n".join(pred["reason"]),
+            "gap":        pred["gap"],
+        })
+
+    if all_predictions_payload:
+        bulk_upsert_predictions(db, all_predictions_payload)
+
+    t_p5 = time.monotonic() - t0
+    counts = {"buy": 0, "candidate": 0, "watch": 0, "skip": 0}
+    for p in all_predictions_payload:
+        if p["decision"] == "buy":       counts["buy"] += 1
+        elif p["decision"] == "candidate": counts["candidate"] += 1
+        elif "[watch]" in (p["reason"] or ""): counts["watch"] += 1
+        else:                             counts["skip"] += 1
+    logger.info("[P5] 暫定予想作成 (%d件): %.1f秒 | buy=%d cand=%d watch=%d skip=%d",
+                len(all_predictions_payload), t_p5,
+                counts["buy"], counts["candidate"], counts["watch"], counts["skip"])
+
     total_elapsed = time.monotonic() - scan_start
     logger.info("=== Morning Scan 完了 ===")
-    logger.info("開催場: %d場 / races: %d件", len(stadiums), len(saved_races))
-    logger.info("entries・predictions は Pre-Race Scan (締切%d分前) で取得",
-                45)
+    logger.info("開催場: %d場 / races: %d件 / entries: %d艇 / 暫定予想: %d件",
+                len(stadiums), len(saved_races), len(all_entries_payload), len(all_predictions_payload))
     logger.info("[P1] 開催場一覧  : %6.1f秒", t_p1)
     logger.info("[P2] レース一覧  : %6.1f秒  (並列%d)", t_p2, MAX_RACE_LIST_WORKERS)
     logger.info("[P3] races upsert: %6.1f秒", t_p3)
+    logger.info("[P4] entries取得 : %6.1f秒  (並列%d)", t_p4, MAX_MORNING_ENTRY_WORKERS)
+    logger.info("[P5] 暫定予想    : %6.1f秒", t_p5)
     logger.info("合計              : %6.0f秒  (%.1f分)", total_elapsed, total_elapsed / 60)
 
 
