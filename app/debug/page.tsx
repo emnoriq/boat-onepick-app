@@ -56,9 +56,10 @@ export default async function DebugPage() {
     <main className="max-w-6xl mx-auto px-4 py-6">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-xl font-bold">デバッグ：全予想一覧</h1>
-        <a href="/ops" className="text-xs text-blue-500 underline hover:text-blue-700">
-          → 運用チェック
-        </a>
+        <div className="flex gap-3 text-xs text-blue-500">
+          <a href="/ops"       className="underline hover:text-blue-700">運用チェック</a>
+          <a href="/roll-plan" className="underline hover:text-blue-700">転がし計画</a>
+        </div>
       </div>
       <p className="text-xs text-gray-400 mb-4">{today}　上位 {rows.length} 件（confidence 降順）</p>
 

@@ -178,6 +178,12 @@ export default async function OpsPage() {
 
       {/* ── リンク ──────────────────────────────────── */}
       <div className="flex gap-3 mt-2 text-center text-xs">
+        <a href="/schedule"  className="flex-1 text-gray-400 underline hover:text-gray-600">
+          スケジュール
+        </a>
+        <a href="/roll-plan" className="flex-1 text-gray-400 underline hover:text-gray-600">
+          転がし計画
+        </a>
         <a href="/debug" className="flex-1 text-gray-400 underline hover:text-gray-600">
           デバッグ一覧
         </a>

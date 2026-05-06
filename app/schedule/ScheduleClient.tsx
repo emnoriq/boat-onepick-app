@@ -249,9 +249,10 @@ export default function ScheduleClient({
         </span>
       </div>
       <div className="flex gap-3 text-xs text-gray-400 mb-5">
-        <a href="/ops"   className="underline hover:text-gray-600">運用チェック</a>
-        <a href="/debug" className="underline hover:text-gray-600">デバッグ</a>
-        <a href="/stats" className="underline hover:text-gray-600">長期統計</a>
+        <a href="/ops"       className="underline hover:text-gray-600">運用チェック</a>
+        <a href="/roll-plan" className="underline hover:text-gray-600">転がし計画</a>
+        <a href="/debug"     className="underline hover:text-gray-600">デバッグ</a>
+        <a href="/stats"     className="underline hover:text-gray-600">長期統計</a>
       </div>
 
       {/* ── サマリ ────────────────────────────────────── */}
