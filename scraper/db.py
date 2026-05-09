@@ -2,10 +2,13 @@
 Supabase DB 操作ユーティリティ
 """
 
+import logging
 import os
 from datetime import date, datetime, timezone, timedelta
 from typing import Optional
 from supabase import create_client, Client
+
+logger = logging.getLogger(__name__)
 
 
 def get_client() -> Client:
@@ -50,24 +53,61 @@ def bulk_upsert_entries(db: Client, entries: list[dict]) -> None:
     """複数艇の出走情報をまとめて upsert（1レース6艇→1 API call）。未存在カラムは自動除去してリトライ。"""
     if not entries:
         return
-    try:
-        db.table("entries").upsert(entries, on_conflict="race_id,lane").execute()
-    except Exception as e:
-        err = str(e)
-        if "does not exist" in err:
-            stripped = [_strip_unknown_columns(row, err) for row in entries]
-            db.table("entries").upsert(stripped, on_conflict="race_id,lane").execute()
-        else:
-            raise
+    rows = list(entries)
+    for _ in range(10):  # 最大10カラム分リトライ（tilt / f_count / l_count 等）
+        try:
+            db.table("entries").upsert(rows, on_conflict="race_id,lane").execute()
+            return
+        except Exception as e:
+            err = str(e)
+            if _is_unknown_column_error(err):
+                stripped = [_strip_unknown_columns(row, err) for row in rows]
+                if stripped == rows:   # 除去できなかった → 無限ループ防止
+                    raise
+                # 除去したカラム名をログに残す（マイグレーション未適用の通知）
+                old_keys = set(rows[0].keys())
+                new_keys = set(stripped[0].keys())
+                dropped = old_keys - new_keys
+                logger.warning(
+                    "⚠️  entries に未存在カラム %s — 除去してリトライ。"
+                    "Supabase SQL Editor で migration を実行してください。", dropped
+                )
+                rows = stripped
+            else:
+                raise
 
 
-def _strip_unknown_columns(payload: dict, known_err_msg: str) -> dict:
+def _is_unknown_column_error(err_msg: str) -> bool:
     """
-    カラム未存在エラー時にペイロードから未知カラムを除去して返す。
-    PostgreSQL エラー: 'column "xxx" of relation "predictions" does not exist'
+    PostgREST / PostgreSQL のカラム未存在エラーを検知する。
+
+    対応するエラーパターン:
+      PGRST204 : "Could not find the 'tilt' column of 'entries' in the schema cache"
+      PostgreSQL: 'column "tilt" of relation "entries" does not exist'
+    """
+    return (
+        "Could not find" in err_msg
+        or "does not exist" in err_msg
+        or "PGRST204" in err_msg
+    )
+
+
+def _strip_unknown_columns(payload: dict, err_msg: str) -> dict:
+    """
+    カラム未存在エラー時にペイロードから未知カラムを1つ除去して返す。
+
+    対応するエラーパターン:
+      PGRST204 : "Could not find the 'tilt' column of 'entries' ..."
+      PostgreSQL: 'column "tilt" of relation "entries" does not exist'
     """
     import re
-    m = re.search(r'column "([^"]+)" of relation', known_err_msg)
+    # PGRST204: シングルクォートでカラム名を囲む
+    m = re.search(r"Could not find the '([^']+)' column", err_msg)
+    if m:
+        col = m.group(1)
+        return {k: v for k, v in payload.items() if k != col}
+    # PostgreSQL DDL エラー: ダブルクォートでカラム名を囲む
+    m = re.search(r'column "([^"]+)" of relation', err_msg)
     if m:
         col = m.group(1)
         return {k: v for k, v in payload.items() if k != col}
@@ -77,30 +117,46 @@ def _strip_unknown_columns(payload: dict, known_err_msg: str) -> dict:
 def upsert_prediction(db: Client, race_id: str, prediction: dict) -> None:
     """予想を登録または更新。未存在カラムがあれば除去してリトライ。"""
     data = {**prediction, "race_id": race_id}
-    try:
-        db.table("predictions").upsert(data, on_conflict="race_id").execute()
-    except Exception as e:
-        err = str(e)
-        if "does not exist" in err:
-            data2 = _strip_unknown_columns(data, err)
-            db.table("predictions").upsert(data2, on_conflict="race_id").execute()
-        else:
-            raise
+    for _ in range(10):
+        try:
+            db.table("predictions").upsert(data, on_conflict="race_id").execute()
+            return
+        except Exception as e:
+            err = str(e)
+            if _is_unknown_column_error(err):
+                stripped = _strip_unknown_columns(data, err)
+                if stripped == data:
+                    raise
+                data = stripped
+            else:
+                raise
 
 
 def bulk_upsert_predictions(db: Client, predictions: list[dict]) -> None:
     """複数予想をまとめて upsert。未存在カラムがあれば除去してリトライ。"""
     if not predictions:
         return
-    try:
-        db.table("predictions").upsert(predictions, on_conflict="race_id").execute()
-    except Exception as e:
-        err = str(e)
-        if "does not exist" in err:
-            stripped = [_strip_unknown_columns(p, err) for p in predictions]
-            db.table("predictions").upsert(stripped, on_conflict="race_id").execute()
-        else:
-            raise
+    rows = list(predictions)
+    for _ in range(10):
+        try:
+            db.table("predictions").upsert(rows, on_conflict="race_id").execute()
+            return
+        except Exception as e:
+            err = str(e)
+            if _is_unknown_column_error(err):
+                stripped = [_strip_unknown_columns(p, err) for p in rows]
+                if stripped == rows:
+                    raise
+                old_keys = set(rows[0].keys())
+                new_keys = set(stripped[0].keys())
+                dropped = old_keys - new_keys
+                logger.warning(
+                    "⚠️  predictions に未存在カラム %s — 除去してリトライ。"
+                    "Supabase SQL Editor で migration を実行してください。", dropped
+                )
+                rows = stripped
+            else:
+                raise
 
 
 def upsert_result(db: Client, race_id: str, result: dict) -> None:
