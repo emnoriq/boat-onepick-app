@@ -1,6 +1,29 @@
 """
 3着以内スコア計算モジュール
 朝スコア(70点満点) + 直前スコア(30点満点) = 総合スコア(100点満点)
+
+【スコア構成】
+朝スコア (70点上限):
+  選手力  20点  = 級別10 + 全国勝率5 + ボート2連対率5
+  モーター 15点
+  枠      10点
+  スタート 10点
+  当地相性 10点
+  合計最大  65点 (安定した選手ほど満点に近づく)
+
+直前スコア (30点上限):
+  展示タイム  10点  ← 艦隊平均との相対評価
+  展示ST       5点  ← 艦隊平均との相対評価
+  チルト補正   5点  ← チルト角から周回安定度を推定
+  進入補正     5点  ← インへの動き = ボーナス / アウトへの動き = ペナルティ
+  風波補正     5点
+
+修正履歴:
+  - local_win_rate の二重計上を解消 (player ブロック → national_win_rate + boat_rate に変更)
+  - A1/A2 roughness ボーナスを削除 (class_score で既に反映済み)
+  - 展示タイム/ST を絶対評価から艦隊平均との相対評価に変更
+  - チルト角を scoring に反映 (展示データあり時のみ)
+  - 進入コース補正を方向性考慮型に変更 (インへの動き = ボーナス)
 """
 
 from dataclasses import dataclass
@@ -22,8 +45,9 @@ class EntryData:
     # 直前情報
     exhibition_time: Optional[float] = None   # 展示タイム
     exhibition_st: Optional[float] = None     # 展示スタートタイム
-    turn_stability: Optional[float] = None    # 周回展示の安定度 (0〜1)
+    turn_stability: Optional[float] = None    # 周回展示の安定度 (0〜1, 未使用 → tilt で代替)
     approach_lane: Optional[int] = None       # 進入コース
+    tilt: Optional[float] = None              # チルト角 (-3.0〜+3.0)
 
 
 @dataclass
@@ -70,10 +94,15 @@ def _motor_score(rate: float) -> float:
     return min(15.0, max(0.0, (rate - 30.0) * 0.3))
 
 
+def _boat_rate_score(rate: float) -> float:
+    """ボート2連対率を0〜5点にマッピング"""
+    return min(5.0, max(0.0, (rate - 30.0) * 0.1))
+
+
 def _lane_score(lane: int) -> float:
     """
     枠有利不利 (インほど有利)
-    1号艇: 10点、以降1点ずつ減少
+    1号艇: 10点、以降1.8点ずつ減少
     """
     return max(0.0, 10.0 - (lane - 1) * 1.8)
 
@@ -95,16 +124,20 @@ def _local_rate_score(rate: float) -> float:
 
 def morning_score(entry: EntryData) -> float:
     """
-    朝スコア計算 (最大70点)
-    選手力20 + モーター15 + 枠10 + スタート力10 + 当地相性10 + 荒れにくさ5
+    朝スコア計算 (最大65点程度 / cap 70点)
+
+    【修正点】
+    - player ブロックを national_win_rate + boat_rate に変更
+      (旧: national + local → local_win_rate が local ブロックと二重計上だったため修正)
+    - roughness ボーナス(旧: A1/A2に+5)を削除
+      (class_score と win_rate_score で既に A1 優位が反映されている)
     """
     # 選手力 (20点)
-    player = (
-        _class_score(entry.racer_class)        # 10
-        + _win_rate_score(entry.national_win_rate)  # 5
-        + _win_rate_score(entry.local_win_rate)     # 5
+    player = min(20.0,
+        _class_score(entry.racer_class)               # 10
+        + _win_rate_score(entry.national_win_rate)    # 5 (全国勝率)
+        + _boat_rate_score(entry.boat_rate)           # 5 (ボート2連対率: 新規追加)
     )
-    player = min(20.0, player)
 
     # モーター (15点)
     motor = _motor_score(entry.motor_rate)
@@ -115,42 +148,101 @@ def morning_score(entry: EntryData) -> float:
     # スタート力 (10点)
     st = _st_score(entry.avg_st, entry.f_count, entry.l_count)
 
-    # 当地相性 (10点)
+    # 当地相性 (10点)  ← local_win_rate はここだけで使用
     local = _local_rate_score(entry.local_win_rate)
 
-    # 荒れにくさ: 全項目のばらつきが小さい場合に加点 (最大5点)
-    roughness = 5.0 if entry.racer_class.upper() in ("A1", "A2") else 2.5
-
-    return min(70.0, player + motor + lane + st + local + roughness)
+    return min(70.0, player + motor + lane + st + local)
 
 
-def pre_race_score(entry: EntryData, condition: RaceCondition) -> float:
+def pre_race_score(
+    entry: EntryData,
+    condition: RaceCondition,
+    fleet_avg_ex_time: Optional[float] = None,
+    fleet_avg_ex_st: Optional[float] = None,
+) -> float:
     """
     直前スコア計算 (最大30点)
-    展示タイム10 + 展示ST5 + 周回展示5 + 進入安定5 + 風波5
+
+    展示タイム10 + 展示ST5 + チルト/周回展示5 + 進入安定5 + 風波5
+
+    【修正点】
+    - 展示タイム/ST: 絶対値基準 → 艦隊平均との相対評価に変更
+      同じ 6.78s でも艦隊平均が 6.70s の場合と 6.85s の場合で意味が異なる
+    - チルト角を scoring に反映: +1.0〜+2.0 が最適ゾーン
+    - 進入コース: フラット-1.5 → 方向性考慮 (インへの動き=ボーナス / アウト=ペナルティ)
+
+    Args:
+        fleet_avg_ex_time: 同レースの全艇展示タイム平均 (None = フォールバック絶対評価)
+        fleet_avg_ex_st:   同レースの全艇展示ST平均    (None = フォールバック絶対評価)
     """
     if entry.exhibition_time is None:
         return 0.0
 
-    # 展示タイム (10点) — タイムが小さいほど足が良い
-    # 標準的な展示タイム帯: 6.50〜6.90秒 程度
-    ex_time_score = max(0.0, min(10.0, (6.90 - entry.exhibition_time) * 25.0))
+    # ── 展示タイム (10点) ── 艦隊相対評価 ───────────────────────────────────
+    if fleet_avg_ex_time is not None:
+        # 艦隊平均より 0.04s 速い → +1.0点 相当 (= 25点/秒スケール)
+        # 中間 (= 平均) → 5.0点
+        ex_time_score = max(0.0, min(10.0,
+            5.0 + (fleet_avg_ex_time - entry.exhibition_time) * 25.0
+        ))
+    else:
+        # フォールバック: 6.90s 基準の絶対評価
+        ex_time_score = max(0.0, min(10.0,
+            (6.90 - entry.exhibition_time) * 25.0
+        ))
 
-    # 展示ST (5点)
+    # ── 展示ST (5点) ── 艦隊相対評価 ─────────────────────────────────────────
     if entry.exhibition_st is not None:
-        ex_st_score = max(0.0, min(5.0, 5.0 - (entry.exhibition_st - 0.10) * 50.0))
+        if fleet_avg_ex_st is not None:
+            # 艦隊平均より 0.01 早い → +0.5点
+            # 中間 (= 平均) → 2.5点
+            ex_st_score = max(0.0, min(5.0,
+                2.5 + (fleet_avg_ex_st - entry.exhibition_st) * 50.0
+            ))
+        else:
+            # フォールバック: 0.10s 基準
+            ex_st_score = max(0.0, min(5.0,
+                5.0 - (entry.exhibition_st - 0.10) * 50.0
+            ))
     else:
         ex_st_score = 2.5  # データなし: 中間値
 
-    # 周回展示安定度 (5点)
-    turn_score = (entry.turn_stability or 0.5) * 5.0
+    # ── チルト補正 (5点) ── 展示データあり時のみ ────────────────────────────
+    # チルト角の意味:
+    #   高い正値 (+2〜+3): 強攻めセット → タイムは速いがターン不安定リスク
+    #   適度な正値 (+0.5〜+2): 攻め気配 → バランス良く良い
+    #   0 付近: 標準セット → 安定
+    #   負値 (-3〜0): 守りセット → 安定だが伸び鈍い
+    if entry.tilt is not None:
+        if 0.5 <= entry.tilt <= 2.0:
+            turn_score = 5.0  # 適度な攻めセット: 最良
+        elif entry.tilt > 2.0:
+            turn_score = 3.5  # 攻めすぎ: ターンリスク
+        elif entry.tilt < -1.0:
+            turn_score = 3.0  # 強守り: 伸びが鈍い
+        else:
+            turn_score = 4.5  # neutral 〜 軽い攻め
+    else:
+        # チルトデータなし: turn_stability フォールバック
+        turn_score = (entry.turn_stability or 0.5) * 5.0
 
-    # 進入安定 (5点)
+    # ── 進入コース補正 (5点) ── 方向性考慮 ──────────────────────────────────
+    # deviation = entry.lane - entry.approach_lane
+    # 正値 = インに動いた (有利: コース取り成功)
+    # 負値 = アウトに動いた (不利: 外に押し出された)
     approach_score = 5.0 if condition.approach_stable else 2.0
-    if entry.approach_lane is not None and entry.approach_lane != entry.lane:
-        approach_score -= 1.5  # コース変更時は減点
+    if entry.approach_lane is not None:
+        deviation = entry.lane - entry.approach_lane
+        if deviation > 0:
+            # インに動いた → コース取り成功ボーナス
+            # 6枠が1コース進入 (deviation=5) → +4.0点 最大
+            approach_score += deviation * 0.8
+        elif deviation < 0:
+            # アウトに動いた → 外押し出しペナルティ
+            # 1枠が2コース以降 (deviation=-1) → -1.2点
+            approach_score = max(0.0, approach_score + deviation * 1.2)
 
-    # 風・波補正 (5点) — レース全体の補正なので均等に配分
+    # ── 風・波補正 (5点) ─────────────────────────────────────────────────────
     wind_penalty = min(3.0, condition.wind_speed * 0.4)
     wave_penalty = min(2.0, condition.wave_height * 0.02)
     condition_score = max(0.0, 5.0 - wind_penalty - wave_penalty)
@@ -159,11 +251,21 @@ def pre_race_score(entry: EntryData, condition: RaceCondition) -> float:
 
 
 def score_entries(entries: list[EntryData], condition: RaceCondition) -> list[EntryScore]:
-    """全艇のスコアを計算してソート済みリストを返す"""
+    """
+    全艇のスコアを計算してソート済みリストを返す。
+
+    展示データが揃っている場合は艦隊平均を計算して相対評価に使用する。
+    """
+    # 艦隊平均を計算 (展示データあり艇のみ)
+    ex_times = [e.exhibition_time for e in entries if e.exhibition_time is not None]
+    ex_sts   = [e.exhibition_st   for e in entries if e.exhibition_st   is not None]
+    fleet_avg_ex_time = sum(ex_times) / len(ex_times) if ex_times else None
+    fleet_avg_ex_st   = sum(ex_sts)   / len(ex_sts)   if ex_sts   else None
+
     scores = []
     for e in entries:
         ms = morning_score(e)
-        ps = pre_race_score(e, condition)
+        ps = pre_race_score(e, condition, fleet_avg_ex_time, fleet_avg_ex_st)
         scores.append(EntryScore(lane=e.lane, racer_name=e.racer_name,
                                  morning_score=ms, pre_race_score=ps))
     scores.sort(key=lambda s: s.total, reverse=True)
@@ -215,8 +317,8 @@ def decide(scores: list[EntryScore], condition: RaceCondition) -> dict:
     reasons: list[str] = []
 
     # 荒れ条件チェック
-    wind_rough      = condition.wind_speed  >= 5.0
-    wave_rough      = condition.wave_height >= 15.0
+    wind_rough        = condition.wind_speed  >= 5.0
+    wave_rough        = condition.wave_height >= 15.0
     approach_unstable = not condition.approach_stable
 
     if wind_rough:

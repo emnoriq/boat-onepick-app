@@ -47,10 +47,18 @@ def upsert_entry(db: Client, race_id: str, entry: dict) -> None:
 
 
 def bulk_upsert_entries(db: Client, entries: list[dict]) -> None:
-    """複数艇の出走情報をまとめて upsert（1レース6艇→1 API call）"""
+    """複数艇の出走情報をまとめて upsert（1レース6艇→1 API call）。未存在カラムは自動除去してリトライ。"""
     if not entries:
         return
-    db.table("entries").upsert(entries, on_conflict="race_id,lane").execute()
+    try:
+        db.table("entries").upsert(entries, on_conflict="race_id,lane").execute()
+    except Exception as e:
+        err = str(e)
+        if "does not exist" in err:
+            stripped = [_strip_unknown_columns(row, err) for row in entries]
+            db.table("entries").upsert(stripped, on_conflict="race_id,lane").execute()
+        else:
+            raise
 
 
 def _strip_unknown_columns(payload: dict, known_err_msg: str) -> dict:

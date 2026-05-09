@@ -151,28 +151,35 @@ export function buildRollPlan(
   const skipCount      = allRows.filter((r) => r.decision === "skip" && !r.is_watch).length;
 
   // ── 全 4-tuple を列挙 ──────────────────────────────────────────────────
+  // 候補が多すぎると O(n^4) が爆発するため上位 MAX_CANDIDATES_FOR_ENUM 件に絞る
+  const MAX_CANDIDATES_FOR_ENUM = 30;
+  const cappedCandidates =
+    candidates.length > MAX_CANDIDATES_FOR_ENUM
+      ? candidates.slice(0, MAX_CANDIDATES_FOR_ENUM)
+      : candidates;
+
   const routes: RollRoute[] = [];
-  const n = candidates.length;
+  const n = cappedCandidates.length;
 
   for (let i = 0; i < n - 3; i++) {
     for (let j = i + 1; j < n - 2; j++) {
-      if (minutesBetween(candidates[i].close_time, candidates[j].close_time) < minGapMin) continue;
+      if (minutesBetween(cappedCandidates[i].close_time, cappedCandidates[j].close_time) < minGapMin) continue;
       for (let k = j + 1; k < n - 1; k++) {
-        if (minutesBetween(candidates[j].close_time, candidates[k].close_time) < minGapMin) continue;
+        if (minutesBetween(cappedCandidates[j].close_time, cappedCandidates[k].close_time) < minGapMin) continue;
         for (let l = k + 1; l < n; l++) {
-          if (minutesBetween(candidates[k].close_time, candidates[l].close_time) < minGapMin) continue;
+          if (minutesBetween(cappedCandidates[k].close_time, cappedCandidates[l].close_time) < minGapMin) continue;
 
           const idxs = [i, j, k, l];
 
           // 最初の「締切前」ステップ = 次に買うべきステップ
-          const nextBuyIdx = idxs.find((idx) => candidates[idx].status === "scheduled") ?? -1;
+          const nextBuyIdx = idxs.find((idx) => cappedCandidates[idx].status === "scheduled") ?? -1;
 
           const steps = idxs.map((idx, pos) =>
             buildStep(
-              candidates[idx],
-              candidates[idx].rollTier,
-              pos > 0 ? candidates[idxs[pos - 1]] : null,
-              candidates[idx].status === "scheduled" && idx === nextBuyIdx,
+              cappedCandidates[idx],
+              cappedCandidates[idx].rollTier,
+              pos > 0 ? cappedCandidates[idxs[pos - 1]] : null,
+              cappedCandidates[idx].status === "scheduled" && idx === nextBuyIdx,
             ),
           );
 
@@ -186,9 +193,9 @@ export function buildRollPlan(
             (steps.reduce((s, r) => s + (r.gap ?? 0), 0) / 4).toFixed(1),
           );
           const intervals    = [
-            minutesBetween(candidates[i].close_time, candidates[j].close_time),
-            minutesBetween(candidates[j].close_time, candidates[k].close_time),
-            minutesBetween(candidates[k].close_time, candidates[l].close_time),
+            minutesBetween(cappedCandidates[i].close_time, cappedCandidates[j].close_time),
+            minutesBetween(cappedCandidates[j].close_time, cappedCandidates[k].close_time),
+            minutesBetween(cappedCandidates[k].close_time, cappedCandidates[l].close_time),
           ];
           const minIntervalMinutes = Math.round(Math.min(...intervals));
 
@@ -235,11 +242,11 @@ export function buildRollPlan(
     judgment  = "skip";
     judgeText = "今日は4回転がしに適したルートがありません。";
   } else if (
-    bestRoute.steps[0].rollTier === "buy" &&
-    (bestRoute.steps[0].confidence ?? 0) >= 75 &&
-    (bestRoute.steps[0].gap ?? 0) >= 12 &&
+    // 「go」条件を緩和: STEP1 が buy でなくても、全体が強ければ go とする
     bestRoute.watchCount === 0 &&
-    bestRoute.buyCount + bestRoute.candidateCount === 4
+    bestRoute.buyCount + bestRoute.candidateCount === 4 &&
+    bestRoute.buyCount >= 2 &&
+    bestRoute.avgConfidence >= 68
   ) {
     judgment  = "go";
     judgeText =

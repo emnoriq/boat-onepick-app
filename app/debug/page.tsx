@@ -61,7 +61,7 @@ export default async function DebugPage() {
           <a href="/roll-plan" className="underline hover:text-blue-700">転がし計画</a>
         </div>
       </div>
-      <p className="text-xs text-gray-400 mb-4">{today}　上位 {rows.length} 件（confidence 降順）</p>
+      <p className="text-xs text-gray-400 mb-4">{today}　全 {rows.length} 件（confidence 降順）</p>
 
       {/* 判定基準 */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4 text-sm">

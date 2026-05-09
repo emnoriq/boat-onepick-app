@@ -378,7 +378,7 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
         score_map = {s.lane: s.total for s in scores}
         pred = decide(scores, condition)
 
-        # entries ペイロード (展示情報込み)
+        # entries ペイロード (展示情報・チルト込み)
         all_entries_payload.extend([{
             "race_id":          race_id,
             "lane":             e.lane,
@@ -392,6 +392,7 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
             "exhibition_time":  e.exhibition_time,
             "exhibition_st":    e.exhibition_st,
             "approach_lane":    e.approach_lane,
+            "tilt":             e.tilt,
             "entry_score":      score_map.get(e.lane),
         } for e in entries])
 
@@ -506,6 +507,7 @@ def pre_race_scan_single(today: date, stadium_name: str, race_no: int) -> None:
         "exhibition_time":  e.exhibition_time,
         "exhibition_st":    e.exhibition_st,
         "approach_lane":    e.approach_lane,
+        "tilt":             e.tilt,
         "entry_score":      score_map.get(e.lane),
     } for e in entries]
 
@@ -668,7 +670,11 @@ STADIUM_CODE_MAP = {
 
 
 def _stadium_name_to_code(name: str) -> str:
-    return STADIUM_CODE_MAP.get(name, "01")
+    code = STADIUM_CODE_MAP.get(name)
+    if code is None:
+        logger.warning("未知の場名 '%s' — コードを 01(桐生) にフォールバックします", name)
+        return "01"
+    return code
 
 
 if __name__ == "__main__":

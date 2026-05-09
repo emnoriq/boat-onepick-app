@@ -107,7 +107,8 @@ function RaceTable({ rows }: { rows: ScheduleRow[] }) {
           {rows.map((r, i) => (
             <tr
               key={`${r.race_id}-${i}`}
-              className={`border-b last:border-b-0 hover:brightness-95 transition-colors ${rowBg(r)}`}
+              className={`border-b last:border-b-0 hover:brightness-95 transition-colors cursor-pointer ${rowBg(r)}`}
+              onClick={() => { window.location.href = `/races/${r.race_id}`; }}
             >
               <td className="px-2 py-1.5 font-medium">{r.stadium}</td>
               <td className="px-2 py-1.5 text-center">{r.race_no}</td>

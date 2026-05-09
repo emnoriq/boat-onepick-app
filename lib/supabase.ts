@@ -192,7 +192,7 @@ export async function getDebugPredictions(date: string): Promise<DebugRow[]> {
   }
 
   rows.sort((a, b) => Number(b.confidence) - Number(a.confidence));
-  return rows.slice(0, 100);
+  return rows;
 }
 
 export async function getStats() {

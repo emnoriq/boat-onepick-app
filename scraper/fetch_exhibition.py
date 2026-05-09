@@ -14,6 +14,11 @@ HTML 構造 (beforeinfo):
         行インデックス+1 = 進入コース番号
         span.table1_boatImage1Number → 艇番
         span.table1_boatImage1Time   → 展示ST (例: .04)
+
+修正履歴:
+  - tilt をEntryData に保存するように変更
+  - 実際の進入コース並び (t238) からも approach_stable を判定
+  - 展示タイムが0件のとき WARNING を出力
 """
 
 import re
@@ -34,6 +39,10 @@ REQUEST_INTERVAL = 2.0
 
 _NUM_RE = re.compile(r"[\d.]+")
 
+# 進入コースの合計偏差がこの値以上なら approach_stable = False
+# 例: 1号艇が4コースに入り 4号艇が1コース → 各偏差3+3=6
+APPROACH_INSTABILITY_THRESHOLD = 6
+
 
 def _get(url: str) -> Optional[BeautifulSoup]:
     try:
@@ -50,6 +59,9 @@ def _get(url: str) -> Optional[BeautifulSoup]:
 def _extract_number(text: str) -> Optional[float]:
     """テキストから最初の数値を抽出 ('7m/s'→7.0, '.04'→0.04, '15cm'→15.0)"""
     text = text.strip()
+    # F/L (フライング/出遅れ) など数値でないケース
+    if not text or text.upper() in ("F", "L", "S", "-", "N/A"):
+        return None
     if text.startswith("."):
         text = "0" + text
     m = _NUM_RE.search(text)
@@ -64,8 +76,12 @@ def _extract_number(text: str) -> Optional[float]:
 def fetch_exhibition(stadium_code: str, race_no: int, target_date: date,
                      entries: list[EntryData]) -> RaceCondition:
     """
-    展示タイム・展示ST・進入コース・風速・波高を取得してentries を直接更新する。
+    展示タイム・展示ST・進入コース・チルト・風速・波高を取得して entries を直接更新する。
     RaceCondition を返す。
+
+    approach_stable は以下2条件どちらかで False になる:
+      1. 風速 ≥5m/s または波高 ≥15cm
+      2. 全艇の進入コース偏差合計 ≥ APPROACH_INSTABILITY_THRESHOLD
     """
     date_str = target_date.strftime("%Y%m%d")
     url = (f"{BASE_URL}/owpc/pc/race/beforeinfo"
@@ -108,6 +124,7 @@ def fetch_exhibition(stadium_code: str, race_no: int, target_date: date,
         elif title == "波高" and val is not None:
             condition.wave_height = val
 
+    # 風波による approach_stable 判定 (後でコース並びでも再判定)
     if condition.wind_speed >= 5.0 or condition.wave_height >= 15.0:
         condition.approach_stable = False
 
@@ -134,9 +151,14 @@ def fetch_exhibition(stadium_code: str, race_no: int, target_date: date,
             if extime is not None:
                 entry_map[boat_num].exhibition_time = extime
             if len(tds) >= 6:
-                tilt = _extract_number(tds[5].get_text(strip=True))
+                tilt_raw = tds[5].get_text(strip=True)
+                tilt = _extract_number(tilt_raw)
                 if tilt is not None:
+                    # チルト角の符号: "-" で始まるテキストは負値
+                    if tilt_raw.strip().startswith("-"):
+                        tilt = -tilt
                     tilt_map[boat_num] = tilt
+                    entry_map[boat_num].tilt = tilt  # EntryData に保存
 
     # ====== 展示ST・進入コース (table.is-w238) ======
     t238 = soup.find("table", class_="is-w238")
@@ -159,11 +181,33 @@ def fetch_exhibition(stadium_code: str, race_no: int, target_date: date,
                 if st_val is not None:
                     entry_map[boat_num].exhibition_st = st_val
 
+    # ====== 進入コース並びによる approach_stable 再判定 ======
+    # 全艇の「本来の枠番 vs 実際の進入コース」偏差合計がしきい値を超えたら不安定扱い
+    if condition.approach_stable:  # 風波で既に False の場合はスキップ
+        total_deviation = sum(
+            abs(e.lane - e.approach_lane)
+            for e in entries
+            if e.approach_lane is not None
+        )
+        if total_deviation >= APPROACH_INSTABILITY_THRESHOLD:
+            condition.approach_stable = False
+            logger.warning(
+                "進入乱れ検出: 偏差合計=%d (閾値%d) → approach_stable=False",
+                total_deviation, APPROACH_INSTABILITY_THRESHOLD
+            )
+
     # ====== 取得結果ログ ======
     extime_count = sum(1 for e in entries if e.exhibition_time is not None)
-    logger.info("天候:%s 風向:%s 風速:%.1fm 波高:%.0fcm",
+    if extime_count == 0:
+        logger.warning(
+            "展示タイムが1艇も取得できませんでした (HTML構造の変化 or 展示未公開) "
+            "stadium=%s race_no=%d date=%s",
+            stadium_code, race_no, target_date.isoformat()
+        )
+    logger.info("天候:%s 風向:%s 風速:%.1fm 波高:%.0fcm approach_stable:%s",
                 weather_text or "不明", wind_dir or "-",
-                condition.wind_speed, condition.wave_height)
+                condition.wind_speed, condition.wave_height,
+                condition.approach_stable)
     logger.info("展示タイム取得: %d/%d艇", extime_count, len(entries))
     for e in sorted(entries, key=lambda x: x.lane):
         tilt_str = f"{tilt_map[e.lane]:+.1f}" if e.lane in tilt_map else "N/A"
