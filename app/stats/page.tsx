@@ -25,18 +25,22 @@ function Row({ label, value, highlight, warn, sub }: {
   );
 }
 
-function TierCard({ color, label, count, hit, rate, roi }: {
-  color: string; label: string; count: number; hit: number; rate: string; roi: string;
+function TierCard({ color, label, count, hit, rate, roi, isBet = true }: {
+  color: string; label: string; count: number; hit: number; rate: string; roi?: string; isBet?: boolean;
 }) {
-  const roiNum = parseFloat(roi);
+  const roiNum = parseFloat(roi ?? "0");
   return (
     <div className={`rounded-lg border p-3 ${color}`}>
       <div className="text-xs font-bold mb-1">{label}</div>
       <div className="text-2xl font-black">{count > 0 ? `${rate}%` : "-"}</div>
       <div className="text-xs mt-0.5">{hit}/{count} 的中</div>
-      <div className={`text-xs mt-0.5 font-semibold ${roiNum >= 100 ? "text-green-700" : "text-gray-500"}`}>
-        回収率 {count > 0 ? `${roi}%` : "-"}
-      </div>
+      {isBet ? (
+        <div className={`text-xs mt-0.5 font-semibold ${roiNum >= 100 ? "text-green-700" : "text-gray-500"}`}>
+          回収率 {count > 0 ? `${roi}%` : "-"}
+        </div>
+      ) : (
+        <div className="text-xs mt-0.5 text-gray-400">非投票対象</div>
+      )}
     </div>
   );
 }
@@ -79,8 +83,8 @@ export default async function StatsPage() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               <TierCard color="bg-red-50 border-red-200 text-red-700"    label="BUY (S)"       count={stats.sCount}     hit={stats.sHit}     rate={stats.sRate}     roi={stats.sRoi} />
               <TierCard color="bg-orange-50 border-orange-200 text-orange-700" label="CANDIDATE (A)" count={stats.aCount} hit={stats.aHit} rate={stats.aRate} roi={stats.aRoi} />
-              <TierCard color="bg-blue-50 border-blue-200 text-blue-700" label="WATCH (B)"     count={stats.watchCount} hit={stats.watchHit} rate={stats.watchRate}  roi="0.0" />
-              <TierCard color="bg-gray-50 border-gray-200 text-gray-500" label="SKIP (C)"      count={stats.skipCount}  hit={stats.skipHit}  rate={tierRateStr(stats.skipCount, stats.skipHit)} roi="0.0" />
+              <TierCard color="bg-blue-50 border-blue-200 text-blue-700" label="WATCH (B)"     count={stats.watchCount} hit={stats.watchHit} rate={stats.watchRate}  isBet={false} />
+              <TierCard color="bg-gray-50 border-gray-200 text-gray-500" label="SKIP (C)"      count={stats.skipCount}  hit={stats.skipHit}  rate={tierRateStr(stats.skipCount, stats.skipHit)} isBet={false} />
             </div>
           </Section>
 

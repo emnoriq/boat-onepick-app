@@ -198,11 +198,10 @@ export async function getDebugPredictions(date: string): Promise<DebugRow[]> {
 export async function getStats() {
   const client = db();
 
-  // predictions + results を JOIN して全件取得
+  // predictions + results を JOIN して全件取得（!inner で予想ありのレースのみ）
   const { data: races } = await client
     .from("races")
-    .select("id, predictions(*), results(*)")
-    .not("predictions", "is", null);
+    .select("id, predictions!inner(*), results(*)");
 
   if (!races) return null;
 
@@ -236,11 +235,13 @@ export async function getStats() {
   const confirmed = rows.filter(r => r.hit !== null);
   if (confirmed.length === 0) return null;
 
-  const hitRows   = confirmed.filter(r => r.hit);
-  const total     = confirmed.length;
-  const hitCount  = hitRows.length;
-  const payoutTotal  = hitRows.reduce((s, r) => s + r.payout, 0);
-  const investTotal  = total * 100;
+  const hitRows      = confirmed.filter(r => r.hit);
+  const total        = confirmed.length;
+  const hitCount     = hitRows.length;
+  // 投資対象は buy + candidate のみ（1点100円）
+  const betRows      = confirmed.filter(r => r.decision === "buy" || r.decision === "candidate");
+  const payoutTotal  = betRows.filter(r => r.hit).reduce((s, r) => s + r.payout, 0);
+  const investTotal  = betRows.length * 100;
   const roi = investTotal > 0 ? ((payoutTotal / investTotal) * 100).toFixed(1) : "0.0";
 
   // ランク別
