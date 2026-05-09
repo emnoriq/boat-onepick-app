@@ -1,0 +1,77 @@
+name: Backtest
+
+# 手動実行のみ (cron なし)
+# GitHub Actions 使用量: 30日・全場で約100〜150分 (無料枠 2000分/月の範囲内)
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "過去何日分を検証するか (デフォルト: 30)"
+        required: false
+        default: "30"
+      start:
+        description: "開始日 YYYY-MM-DD (days より優先)"
+        required: false
+        default: ""
+      end:
+        description: "終了日 YYYY-MM-DD (省略時: 昨日)"
+        required: false
+        default: ""
+      workers:
+        description: "並列ワーカー数 (デフォルト: 3 / 最大4推奨)"
+        required: false
+        default: "3"
+      stadiums:
+        description: "場コードをカンマ区切り (例: 08,12,22 / 省略時: 全18場)"
+        required: false
+        default: ""
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360   # 最大6時間 (30日・全場で約2時間)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: scraper/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r scraper/requirements.txt
+
+      - name: Show parameters
+        run: |
+          echo "days     : ${{ github.event.inputs.days }}"
+          echo "start    : ${{ github.event.inputs.start || '(days から計算)' }}"
+          echo "end      : ${{ github.event.inputs.end || '昨日' }}"
+          echo "workers  : ${{ github.event.inputs.workers }}"
+          echo "stadiums : ${{ github.event.inputs.stadiums || '全18場' }}"
+          echo "UTC now  : $(date -u '+%Y-%m-%d %H:%M:%S')"
+          echo "JST now  : $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M:%S')"
+
+      - name: Run backtest
+        # Supabase 不要 — boatrace.jp から直接取得してメモリ上で計算
+        run: |
+          ARGS=""
+
+          # start/end 指定があれば優先
+          if [ -n "${{ github.event.inputs.start }}" ] && [ -n "${{ github.event.inputs.end }}" ]; then
+            ARGS="$ARGS --start ${{ github.event.inputs.start }} --end ${{ github.event.inputs.end }}"
+          elif [ -n "${{ github.event.inputs.start }}" ]; then
+            ARGS="$ARGS --start ${{ github.event.inputs.start }}"
+          else
+            ARGS="$ARGS --days ${{ github.event.inputs.days || '30' }}"
+          fi
+
+          ARGS="$ARGS --workers ${{ github.event.inputs.workers || '3' }}"
+
+          if [ -n "${{ github.event.inputs.stadiums }}" ]; then
+            ARGS="$ARGS --stadiums ${{ github.event.inputs.stadiums }}"
+          fi
+
+          python3 scraper/backtest.py $ARGS
