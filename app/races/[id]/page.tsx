@@ -17,9 +17,10 @@ export default async function RaceDetailPage({ params }: Props) {
 
   return (
     <main className="max-w-lg mx-auto px-4 py-6">
-      <a href="/" className="text-sm text-blue-500 hover:underline mb-4 block">
-        ← 一覧に戻る
-      </a>
+      <div className="flex gap-4 text-sm mb-4">
+        <a href="/schedule" className="text-blue-500 hover:underline">← スケジュール</a>
+        <a href="/"         className="text-gray-400 hover:underline">ホーム</a>
+      </div>
 
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-xl font-bold">

@@ -83,6 +83,7 @@ def _pre_race_worker(args: tuple) -> tuple:
             } for e in entry_objects]
 
         # ② DB の dict から EntryData を組み立て
+        # f_count / l_count は以前のレコードでは 0 になる場合がある (旧データ互換)
         entries = [EntryData(
             lane=e["lane"],
             racer_name=e.get("racer_name", ""),
@@ -92,6 +93,8 @@ def _pre_race_worker(args: tuple) -> tuple:
             motor_rate=e.get("motor_rate") or 0.0,
             boat_rate=e.get("boat_rate") or 0.0,
             avg_st=e.get("avg_st") or 0.15,
+            f_count=int(e.get("f_count") or 0),
+            l_count=int(e.get("l_count") or 0),
         ) for e in sorted(existing_entries, key=lambda x: x["lane"])]
 
         # ③ 展示情報取得（entries を in-place で更新）
@@ -243,6 +246,8 @@ def morning_scan(today: date,
                     "motor_rate":        e.motor_rate,
                     "boat_rate":         e.boat_rate,
                     "avg_st":            e.avg_st,
+                    "f_count":           e.f_count,
+                    "l_count":           e.l_count,
                 })
 
     t_p4 = time.monotonic() - t0
@@ -574,7 +579,8 @@ def result_scan(today: date) -> None:
     db = get_client()
 
     # 締切済み・未 finished のレース一覧
-    past_races = get_races_for_result_scan(db, today, minutes_after=10)
+    # 10分では早すぎてまだレース中のことが多い → 15分バッファに変更
+    past_races = get_races_for_result_scan(db, today, minutes_after=15)
 
     if not past_races:
         logger.info("=== Result Scan: 対象レースなし ===")
