@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { ScheduleRow, ScheduleSummary } from "@/lib/supabase";
 
 type Tab = "time" | "conf" | "bet" | "watch";
@@ -194,16 +194,38 @@ function SummaryCard({
 
 // ── メインコンポーネント ──────────────────────────────────────────────────────
 
+/** YYYY-MM-DD の前日・翌日を返す */
+function offsetDate(base: string, days: number): string {
+  const d = new Date(base);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** 自動リフレッシュ間隔 (ms) — レース開催時間帯のみリロード */
+const AUTO_REFRESH_MS = 30_000;
+
 export default function ScheduleClient({
   rows,
   summary,
   today,
+  date,
 }: {
   rows: ScheduleRow[];
   summary: ScheduleSummary;
   today: string;
+  date: string;
 }) {
   const [tab, setTab] = useState<Tab>("time");
+
+  // ── 自動リフレッシュ (30秒) — 当日 & 締切前レースがある場合のみ ───────────
+  useEffect(() => {
+    if (date !== today) return;                 // 過去日は不要
+    if (summary.openCount === 0) return;        // 締切前レースがなければ不要
+    const id = setInterval(() => {
+      window.location.reload();
+    }, AUTO_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [date, today, summary.openCount]);
 
   // 精度順: 評価済みを confidence desc / gap desc でソート
   const confRows = useMemo(
@@ -245,10 +267,34 @@ export default function ScheduleClient({
       {/* ── ヘッダ ────────────────────────────────────── */}
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-xl font-bold">レーススケジュール</h1>
-        <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">
-          {today}
-        </span>
+        {/* 日付ナビゲーション */}
+        <div className="flex items-center gap-1">
+          <a
+            href={`/schedule?date=${offsetDate(date, -1)}`}
+            className="px-2 py-1 text-xs border rounded hover:bg-gray-50 text-gray-500"
+            title="前日"
+          >←</a>
+          <span className={`text-xs px-2 py-1 rounded font-mono ${
+            date === today ? "bg-blue-100 text-blue-700 font-bold" : "bg-gray-100 text-gray-600"
+          }`}>
+            {date}
+            {date === today && <span className="ml-1 text-blue-500">今日</span>}
+          </span>
+          <a
+            href={`/schedule?date=${offsetDate(date, 1)}`}
+            className={`px-2 py-1 text-xs border rounded hover:bg-gray-50 text-gray-500 ${
+              date >= today ? "opacity-40 pointer-events-none" : ""
+            }`}
+            title="翌日"
+          >→</a>
+        </div>
       </div>
+      {/* 自動リフレッシュ表示 */}
+      {date === today && summary.openCount > 0 && (
+        <p className="text-xs text-blue-400 mb-1">
+          🔄 締切前 {summary.openCount} レースあり — 30秒ごとに自動更新
+        </p>
+      )}
       <div className="flex gap-3 text-xs text-gray-400 mb-5">
         <a href="/ops"       className="underline hover:text-gray-600">運用チェック</a>
         <a href="/roll-plan" className="underline hover:text-gray-600">転がし計画</a>

@@ -11,6 +11,16 @@ function todayJST(): string {
   }).replace(/\//g, "-");
 }
 
+function isValidDate(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s));
+}
+
+function offsetDate(base: string, days: number): string {
+  const d = new Date(base);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 function DecisionBadge({ decision, isWatch }: { decision: string; isWatch: boolean }) {
   if (decision === "buy")
     return <span className="px-1.5 py-0.5 rounded text-xs bg-red-100 text-red-700 font-bold">buy</span>;
@@ -32,9 +42,13 @@ function HitBadge({ hit }: { hit: boolean | null }) {
     : <span className="text-xs bg-gray-100 text-gray-500 px-1 rounded">不的中</span>;
 }
 
-export default async function DebugPage() {
+type Props = { searchParams: { date?: string } };
+
+export default async function DebugPage({ searchParams }: Props) {
   const today = todayJST();
-  const rows = await getDebugPredictions(today);
+  const reqDate = searchParams.date;
+  const date = reqDate && isValidDate(reqDate) ? reqDate : today;
+  const rows = await getDebugPredictions(date);
 
   const byDecision = { buy: 0, candidate: 0, watch: 0, skip: 0 };
   for (const r of rows) {
@@ -59,9 +73,30 @@ export default async function DebugPage() {
         <div className="flex gap-3 text-xs text-blue-500">
           <a href="/ops"       className="underline hover:text-blue-700">運用チェック</a>
           <a href="/roll-plan" className="underline hover:text-blue-700">転がし計画</a>
+          <a href="/schedule"  className="underline hover:text-blue-700">スケジュール</a>
         </div>
       </div>
-      <p className="text-xs text-gray-400 mb-4">{today}　全 {rows.length} 件（confidence 降順）</p>
+
+      {/* 日付ナビゲーション */}
+      <div className="flex items-center gap-1 mb-3">
+        <a
+          href={`/debug?date=${offsetDate(date, -1)}`}
+          className="px-2 py-1 text-xs border rounded hover:bg-gray-50 text-gray-500"
+        >← 前日</a>
+        <span className={`text-xs px-2 py-1 rounded font-mono ${
+          date === today ? "bg-blue-100 text-blue-700 font-bold" : "bg-gray-100 text-gray-600"
+        }`}>
+          {date}{date === today && " (今日)"}
+        </span>
+        <a
+          href={`/debug?date=${offsetDate(date, 1)}`}
+          className={`px-2 py-1 text-xs border rounded hover:bg-gray-50 text-gray-500 ${
+            date >= today ? "opacity-40 pointer-events-none" : ""
+          }`}
+        >翌日 →</a>
+      </div>
+
+      <p className="text-xs text-gray-400 mb-4">全 {rows.length} 件（confidence 降順）</p>
 
       {/* 判定基準 */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4 text-sm">
@@ -89,7 +124,7 @@ export default async function DebugPage() {
           </div>
         </div>
         <p className="text-xs text-gray-500 mt-2">
-          confidence = avg_top3_score × (1 + gap/200) ／ gap = 3位スコア − 4位スコア
+          confidence = avg_top3_score × (1 + gap/200) × 1号艇補正 ／ 展示タイム・STは艦隊平均との相対評価
         </p>
       </div>
 
@@ -106,7 +141,7 @@ export default async function DebugPage() {
         </span>
         {hitRows.length > 0 && (
           <span className="bg-green-50 border border-green-200 text-green-700 px-2 py-0.5 rounded">
-            的中: {hitCount} / {hitRows.length}
+            的中: {hitCount} / {hitRows.length} ({hitRows.length > 0 ? ((hitCount / hitRows.length) * 100).toFixed(1) : "-"}%)
           </span>
         )}
       </div>
@@ -133,7 +168,11 @@ export default async function DebugPage() {
           </thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={`${r.race_id}-${i}`} className="hover:bg-gray-50">
+              <tr
+                key={`${r.race_id}-${i}`}
+                className="hover:bg-gray-50 cursor-pointer"
+                onClick={() => { window.location.href = `/races/${r.race_id}`; }}
+              >
                 <td className="px-2 py-1.5 border">{r.stadium}</td>
                 <td className="px-2 py-1.5 border text-center">{r.race_no}</td>
                 <td className="px-2 py-1.5 border text-center">

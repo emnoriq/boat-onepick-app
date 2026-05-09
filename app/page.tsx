@@ -52,10 +52,12 @@ export default async function HomePage() {
           {candidateRaces.map((r) => <RaceCard key={r.id} race={r} />)}
         </section>
       )}
-      <div className="mt-8 text-center">
-        <a href="/debug" className="text-xs text-gray-400 underline hover:text-gray-600">
-          デバッグ一覧を見る
-        </a>
+      <div className="mt-8 grid grid-cols-3 gap-2 text-center text-xs text-gray-500">
+        <a href="/schedule"  className="border rounded-lg py-2 hover:bg-gray-50 hover:text-gray-700">📋 スケジュール</a>
+        <a href="/roll-plan" className="border rounded-lg py-2 hover:bg-gray-50 hover:text-gray-700">🔄 転がし計画</a>
+        <a href="/stats"     className="border rounded-lg py-2 hover:bg-gray-50 hover:text-gray-700">📊 長期統計</a>
+        <a href="/ops"       className="border rounded-lg py-2 hover:bg-gray-50 hover:text-gray-700">🔧 運用チェック</a>
+        <a href="/debug"     className="border rounded-lg py-2 hover:bg-gray-50 hover:text-gray-700">🐛 デバッグ</a>
       </div>
     </main>
   );

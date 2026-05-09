@@ -32,6 +32,8 @@ export type Entry = {
   avg_st: number | null;
   exhibition_time: number | null;
   exhibition_st: number | null;
+  approach_lane: number | null;
+  tilt: number | null;
   entry_score: number | null;
 };
 
@@ -368,6 +370,8 @@ export async function getOpsData(date: string): Promise<OpsData> {
   let verifiedTotal = 0;
   let hitCount = 0;
   let payoutTotal = 0;
+  // 投資額は buy + candidate のみ (1点100円)
+  let betVerifiedCount = 0;
   let lastUpdated: Date | null = null;
 
   for (const race of raceList) {
@@ -404,13 +408,22 @@ export async function getOpsData(date: string): Promise<OpsData> {
       if (pred.is_hit !== null && pred.is_hit !== undefined) {
         verifiedTotal++;
         if (pred.is_hit) hitCount++;
+        // 投資対象 (buy + candidate) のみカウント
+        if (pred.decision === "buy" || pred.decision === "candidate") {
+          betVerifiedCount++;
+        }
       }
     }
 
     const res = race.results as any | null;
     if (res) {
       resultsTotal++;
-      if (res.prediction_hit && res.payout) payoutTotal += res.payout;
+      // 払戻は buy + candidate が的中した場合のみ加算
+      const predDec = (race.predictions as any)?.decision;
+      if (res.prediction_hit && res.payout &&
+          (predDec === "buy" || predDec === "candidate")) {
+        payoutTotal += res.payout;
+      }
     }
   }
 
@@ -420,7 +433,7 @@ export async function getOpsData(date: string): Promise<OpsData> {
   const hitRate = verifiedTotal > 0
     ? ((hitCount / verifiedTotal) * 100).toFixed(1)
     : "0.0";
-  const investTotal = verifiedTotal * 100;
+  const investTotal = betVerifiedCount * 100;  // buy+candidate のみ
   const roi = investTotal > 0
     ? ((payoutTotal / investTotal) * 100).toFixed(1)
     : "0.0";
