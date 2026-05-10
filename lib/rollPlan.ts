@@ -69,8 +69,12 @@ export function getRollTier(row: ScheduleRow): RollTier | null {
   const gap  = row.gap        ?? 0;
   if (!row.decision || !row.pick) return null;
 
-  if (row.decision === "buy"       && conf >= 75 && gap >= 12) return "buy";
-  if (row.decision === "candidate" && conf >= 65 && gap >= 10) return "candidate";
+  // 展示データが取得されていないレースはロールプラン対象外
+  // 朝スキャン暫定判定は信頼性が低いため除外する
+  if (!row.has_exhibition) return null;
+
+  if (row.decision === "buy"       && conf >= 72 && gap >= 10) return "buy";
+  if (row.decision === "candidate" && conf >= 63 && gap >= 8)  return "candidate";
   // row.is_watch は isWatchCandidate() で計算済み（荒れ要因は除外済み）
   if (row.decision === "skip" && row.is_watch && conf >= 55 && gap >= 7) return "watch";
   return null;
@@ -242,11 +246,11 @@ export function buildRollPlan(
     judgment  = "skip";
     judgeText = "今日は4回転がしに適したルートがありません。";
   } else if (
-    // 「go」条件を緩和: STEP1 が buy でなくても、全体が強ければ go とする
+    // 「go」条件: 展示確認済みレースのみで構成された4本ルート
     bestRoute.watchCount === 0 &&
     bestRoute.buyCount + bestRoute.candidateCount === 4 &&
     bestRoute.buyCount >= 2 &&
-    bestRoute.avgConfidence >= 68
+    bestRoute.avgConfidence >= 66
   ) {
     judgment  = "go";
     judgeText =
