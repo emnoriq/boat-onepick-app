@@ -308,22 +308,30 @@ def decide(
     decision は "buy" | "candidate" | "skip" の3値。
     watch は decision="skip" の一部で、reason に "[watch]" マーカーを付与。
 
-    # ===== 閾値（2026-05-10 / 7日間バックテスト調整済み） =====
+    # ===== 閾値（2026-05-10 / 3日間420件バックテスト調整済み） =====
     # confidence = avg_top3 × (1 + gap/150) × lane1_mul
-    #              ↑ gap重みを /200→/150 に強化（差が明確なレースを優先）
-    # buy:       confidence ≥ 67 かつ gap ≥ 10  (S ランク)
-    # candidate: confidence ≥ 59 かつ gap ≥ 7   (A ランク)
+    #
+    # バックテスト結果（v5モデル・展示データあり100%）:
+    #   conf≥70: 98件 / 的中率32.7% / 平均払戻¥281 / ROI -8.2% ← 最良
+    #   conf≥67: 185件 / 的中率26.5% / 平均払戻¥303 / ROI -19.8%
+    #   BUY判定: 22件 / 的中率18.2% / 平均払戻¥222 / ROI -59.5%（低閾値の罠）
+    #   SKIP:   354件 / 的中率22.9% / 平均払戻¥397 / ROI -9.2%（SPIPの方が配当高い）
+    #
+    # 根本課題: 高confidence = 人気組み合わせ = 低配当。
+    # 対策: 閾値引き上げ + ペイロードフィルタ強化（live odds での選別が核心）
+    #
+    # buy:       confidence ≥ 70 かつ gap ≥ 10  (S ランク) ← 旧67 → 70
+    # candidate: confidence ≥ 62 かつ gap ≥ 7   (A ランク) ← 旧59 → 62
     # watch:     confidence ≥ 55 かつ gap ≥ 7   (B ランク, decision=skip)
     # skip:      それ未満                         (C ランク)
     # ──────────────────────────────────────────────────────────
     # [1号艇コース補正 v5]
     #   lane1_approach が指定され、かつ3コース以降に進入している場合:
     #   → 信頼度に 0.85 掛け（旧: 4位以下と同等の0.90）
-    #   → 理由: 1号艇がアウト進入の場合、三連複の結果は大幅に不安定化する
     # ──────────────────────────────────────────────────────────
-    # [払戻フィルター]
-    #   buy   < ¥400 → candidate に降格
-    #   cand  < ¥250 → skip に降格
+    # [払戻フィルター] ← 基準を強化（低配当の罠を回避）
+    #   buy   < ¥500 → candidate に降格  (旧: ¥400。BUY平均¥222→損益分岐 100/0.327=¥306)
+    #   cand  < ¥300 → skip に降格       (旧: ¥250)
     # ===========================================================
 
     Args:
@@ -390,12 +398,12 @@ def decide(
     lane1_label = ["1位", "2位", "3位", "4位以下"][min(lane1_rank, 3)] if lane1_rank >= 0 else "不明"
     approach_note = f" (コース{lane1_approach}進入)" if lane1_approach else ""
 
-    if not forced_skip and confidence >= 67 and gap >= 10:
+    if not forced_skip and confidence >= 70 and gap >= 10:
         decision = "buy"
         rank = "S"
         reasons.append(f"上位3艇のスコア差が明確 (gap={gap:.1f} / 1号艇{lane1_label}{approach_note})")
 
-    elif not forced_skip and confidence >= 59 and gap >= 7:
+    elif not forced_skip and confidence >= 62 and gap >= 7:
         decision = "candidate"
         rank = "A"
         reasons.append(f"上位3艇が安定 (gap={gap:.1f} / 1号艇{lane1_label}{approach_note})")
@@ -420,14 +428,14 @@ def decide(
     # ── 払戻フィルター ────────────────────────────────────────────────────────
     if pick_payout is not None and pick_payout > 0:
         reasons.append(f"三連複オッズ: ¥{pick_payout}/¥100")
-        if decision == "buy" and pick_payout < 400:
+        if decision == "buy" and pick_payout < 500:
             decision = "candidate"
             rank = "A"
-            reasons.append(f"⚠️ 払戻¥{pick_payout} < ¥400 → candidate に降格")
-        elif decision == "candidate" and pick_payout < 250:
+            reasons.append(f"⚠️ 払戻¥{pick_payout} < ¥500 → candidate に降格")
+        elif decision == "candidate" and pick_payout < 300:
             decision = "skip"
             rank = "C"
-            reasons.append(f"⚠️ 払戻¥{pick_payout} < ¥250 → skip に降格")
+            reasons.append(f"⚠️ 払戻¥{pick_payout} < ¥300 → skip に降格")
 
     return {
         "pick":       pick,

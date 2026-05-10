@@ -104,14 +104,16 @@ export default async function DebugPage({ searchParams }: Props) {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
           <div className="bg-red-100 rounded p-2">
             <p className="font-bold text-red-700">Sランク BUY</p>
-            <p className="text-red-600">confidence ≥ 67</p>
+            <p className="text-red-600">confidence ≥ 70</p>
             <p className="text-red-600">gap ≥ 10点</p>
+            <p className="text-red-600">払戻 ≥ ¥500</p>
             <p className="text-red-500 mt-0.5 font-semibold">展示確認必須</p>
           </div>
           <div className="bg-orange-100 rounded p-2">
             <p className="font-bold text-orange-700">Aランク CANDIDATE</p>
-            <p className="text-orange-600">confidence ≥ 59</p>
+            <p className="text-orange-600">confidence ≥ 62</p>
             <p className="text-orange-600">gap ≥ 7点</p>
+            <p className="text-orange-600">払戻 ≥ ¥300</p>
             <p className="text-orange-500 mt-0.5 font-semibold">展示確認必須</p>
           </div>
           <div className="bg-blue-100 rounded p-2">
