@@ -158,6 +158,11 @@ def _process_day(target_date: date, stadium_codes: list[str], workers: int) -> l
     return results
 
 
+def _hr_str(rate: float) -> str:
+    """的中率を短い文字列に変換"""
+    return f"{rate:.1f}%"
+
+
 def _roi_str(hits: list, total: int) -> str:
     """ROI 文字列を計算 (¥100 ベット換算)"""
     payouts = [r.payout for r in hits if r.payout]
@@ -212,16 +217,37 @@ def _print_report(results: list[BtResult], start: date, end: date) -> None:
         print(f"  {label:<12} {len(bucket):>5} {len(hits):>5} {hit_rate:>6.1f}% "
               f"{avg_pay:>8,.0f}円 {roi:>8}")
 
+    # ── 展示データあり限定（本番と同じ条件）──────────────────────
+    print()
+    print("  【展示データあり限定 — 信頼度別】 (本番pre_race相当)")
+    ex_confirmed = [r for r in confirmed if r.has_exhibition]
+    print(f"  {'閾値':<12} {'件数':>5} {'的中':>5} {'的中率':>7} {'平均払戻':>9} {'ROI':>8}")
+    print("  " + "-" * 52)
+    for label, thr in [("conf ≥ 72", 72), ("conf ≥ 70", 70), ("conf ≥ 67", 67),
+                        ("conf ≥ 65", 65), ("conf ≥ 62", 62), ("conf ≥ 55", 55),
+                        ("展示あり全体", 0)]:
+        bucket = [r for r in ex_confirmed if r.confidence >= thr]
+        if len(bucket) < 5:
+            continue
+        hits = [r for r in bucket if r.hit]
+        hit_rate = len(hits) / len(bucket) * 100
+        payouts = [r.payout for r in hits if r.payout]
+        avg_pay = sum(payouts) / len(payouts) if payouts else 0
+        roi = _roi_str(hits, len(bucket))
+        print(f"  {label:<12} {len(bucket):>5} {len(hits):>5} {hit_rate:>6.1f}% "
+              f"{avg_pay:>8,.0f}円 {roi:>8}")
+
     # ── 判定別 ───────────────────────────────────────────────────
     print()
-    print("  【判定別 結果】")
+    print("  【判定別 結果】(全体 / 展示あり)")
     for dec_label, dec_fn in [
         ("BUY",       lambda r: r.decision == "buy"),
         ("CANDIDATE", lambda r: r.decision == "candidate"),
         ("WATCH",     lambda r: r.decision == "skip" and r.is_watch),
         ("SKIP",      lambda r: r.decision == "skip" and not r.is_watch),
     ]:
-        bucket = [r for r in confirmed if dec_fn(r)]
+        bucket    = [r for r in confirmed    if dec_fn(r)]
+        bucket_ex = [r for r in ex_confirmed if dec_fn(r)]
         if not bucket:
             continue
         hits = [r for r in bucket if r.hit]
@@ -229,8 +255,13 @@ def _print_report(results: list[BtResult], start: date, end: date) -> None:
         payouts = [r.payout for r in hits if r.payout]
         avg_pay = sum(payouts) / len(payouts) if payouts else 0
         roi = _roi_str(hits, len(bucket))
-        print(f"  {dec_label:<10}: {len(bucket):>4}件  的中{len(hits):>3}件  "
-              f"({hit_rate:.1f}%)  平均払戻¥{avg_pay:,.0f}  ROI {roi}")
+        # 展示あり限定
+        hits_ex  = [r for r in bucket_ex if r.hit]
+        hr_ex    = len(hits_ex) / len(bucket_ex) * 100 if bucket_ex else 0
+        roi_ex   = _roi_str(hits_ex, len(bucket_ex)) if bucket_ex else "N/A"
+        print(f"  {dec_label:<10}: {len(bucket):>4}件({_hr_str(hit_rate)}) "
+              f"全:{roi:>8} | 展示あり{len(bucket_ex):>3}件({_hr_str(hr_ex)}) {roi_ex:>8}"
+              f"  avg¥{avg_pay:,.0f}")
 
     # ── 最適閾値の提案 ────────────────────────────────────────────
     print()
