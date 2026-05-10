@@ -4,11 +4,11 @@ name: Pre-Race Scan
 # 09:00 JST = 00:00 UTC  /  16:30 JST = 07:30 UTC
 
 on:
-  schedule:
-    # 08:00〜08:30 JST = UTC 前日 23:00〜23:30 — 30分おき
-    - cron: "0,30 23 * * *"
-    # 09:00〜22:30 JST = UTC 00:00〜13:30 — 30分おき（GitHub throttling 対策）
-    - cron: "0,30 0-13 * * *"
+  # schedule は一時停止中（GitHub Actions 無料枠節約のため）
+  # 再開する場合は以下のコメントを外す:
+  # schedule:
+  #   - cron: "0,30 23 * * *"
+  #   - cron: "0,30 0-13 * * *"
   workflow_dispatch:
     inputs:
       stadium:

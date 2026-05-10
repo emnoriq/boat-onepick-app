@@ -4,10 +4,11 @@ name: Result Scan
 # 10:00 JST = 01:00 UTC  /  17:00 JST = 08:00 UTC
 
 on:
-  schedule:
-    # 09:30〜23:00 JST = UTC 00:30〜14:00 — 30分おき（夜レース対応）
-    - cron: "30 0-13 * * *"
-    - cron: "0 1-14 * * *"
+  # schedule は一時停止中（GitHub Actions 無料枠節約のため）
+  # 再開する場合は以下のコメントを外す:
+  # schedule:
+  #   - cron: "30 0-13 * * *"
+  #   - cron: "0 1-14 * * *"
   workflow_dispatch:
     inputs:
       stadium:
