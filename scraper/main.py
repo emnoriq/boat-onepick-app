@@ -383,12 +383,17 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
         scores = score_entries(entries, condition)
         score_map = {s.lane: s.total for s in scores}
 
+        # 1号艇の実際の進入コース（confidence 補正用）
+        lane1_entry  = next((e for e in entries if e.lane == 1), None)
+        lane1_approach = lane1_entry.approach_lane if lane1_entry else None
+
         # 三連複オッズを取得してペイロードフィルタに使用
         top3_lanes = [str(scores[i].lane) for i in range(min(3, len(scores)))]
         initial_pick = "-".join(sorted(top3_lanes, key=int))
         odds = fetch_trifecta_box_odds(code, race_no, today)
         pick_payout = get_pick_payout(odds, initial_pick)
-        pred = decide(scores, condition, pick_payout=pick_payout)
+        pred = decide(scores, condition, pick_payout=pick_payout,
+                      lane1_approach=lane1_approach)
 
         # entries ペイロード (展示情報・チルト込み)
         all_entries_payload.extend([{
@@ -501,6 +506,12 @@ def pre_race_scan_single(today: date, stadium_name: str, race_no: int) -> None:
     scores = score_entries(entries, condition)
     score_map = {s.lane: s.total for s in scores}
 
+    # 1号艇の実際の進入コース（confidence 補正用）
+    lane1_entry    = next((e for e in entries if e.lane == 1), None)
+    lane1_approach = lane1_entry.approach_lane if lane1_entry else None
+    if lane1_approach and lane1_approach >= 3:
+        logger.info("⚠️ 1号艇コース%d進入 — インアドバンテージ消失", lane1_approach)
+
     # 三連複オッズを取得してペイロードフィルタに使用
     top3_lanes = [str(scores[i].lane) for i in range(min(3, len(scores)))]
     initial_pick = "-".join(sorted(top3_lanes, key=int))
@@ -510,7 +521,8 @@ def pre_race_scan_single(today: date, stadium_name: str, race_no: int) -> None:
         logger.info("三連複オッズ (pick=%s): ¥%d/¥100", initial_pick, pick_payout)
     else:
         logger.info("三連複オッズ: 取得できませんでした (pick=%s)", initial_pick)
-    pred = decide(scores, condition, pick_payout=pick_payout)
+    pred = decide(scores, condition, pick_payout=pick_payout,
+                  lane1_approach=lane1_approach)
 
     reason_lines = pred["reason"]
     if not ex_ok:

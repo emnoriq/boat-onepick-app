@@ -5,25 +5,29 @@
 【スコア構成】
 朝スコア (70点上限):
   選手力  20点  = 級別10 + 全国勝率5 + ボート2連対率5
-  モーター 15点
+  モーター 15点  ← 艦隊平均との相対評価（全艇平均=7.5点）
   枠      10点
   スタート 10点
   当地相性 10点
   合計最大  65点 (安定した選手ほど満点に近づく)
 
-直前スコア (30点上限):
-  展示タイム  10点  ← 艦隊平均との相対評価
+直前スコア (30点上限, 理論最大33点をcap):
+  展示タイム  13点  ← 艦隊平均との相対評価（スケール拡大 25→33）
   展示ST       5点  ← 艦隊平均との相対評価
-  チルト補正   5点  ← チルト角から周回安定度を推定
-  進入補正     5点  ← インへの動き = ボーナス / アウトへの動き = ペナルティ
-  風波補正     5点
+  チルト補正   4点  ← チルト角から周回安定度を推定
+  進入補正     8点  ← 実コース位置ベース（コース1=6pt基準）
+  風波補正     3点
 
 修正履歴:
-  - local_win_rate の二重計上を解消 (player ブロック → national_win_rate + boat_rate に変更)
-  - A1/A2 roughness ボーナスを削除 (class_score で既に反映済み)
-  - 展示タイム/ST を絶対評価から艦隊平均との相対評価に変更
-  - チルト角を scoring に反映 (展示データあり時のみ)
-  - 進入コース補正を方向性考慮型に変更 (インへの動き = ボーナス)
+  v1: local_win_rate の二重計上を解消
+  v2: 展示タイム/ST を絶対評価から艦隊平均との相対評価に変更
+  v3: チルト角を scoring に反映
+  v4: 進入コース補正を方向性考慮型に変更
+  v5: モータースコアを艦隊相対評価に変更
+      展示タイム識別力を強化 (13点・スケール33)
+      進入コースを実コース位置ベースに刷新 (最大8点)
+      信頼度のgap重みを強化 (/200→/150)
+      1号艇コース3以降進入の信頼度ペナルティを追加
 """
 
 from dataclasses import dataclass
@@ -45,7 +49,7 @@ class EntryData:
     # 直前情報
     exhibition_time: Optional[float] = None   # 展示タイム
     exhibition_st: Optional[float] = None     # 展示スタートタイム
-    turn_stability: Optional[float] = None    # 周回展示の安定度 (0〜1, 未使用 → tilt で代替)
+    turn_stability: Optional[float] = None    # 周回展示の安定度 (未使用 → tilt で代替)
     approach_lane: Optional[int] = None       # 進入コース
     tilt: Optional[float] = None              # チルト角 (-3.0〜+3.0)
 
@@ -89,9 +93,15 @@ def _win_rate_score(rate: float) -> float:
     return min(5.0, max(0.0, (rate - 3.0) * 2.0))
 
 
-def _motor_score(rate: float) -> float:
-    """モーター2連対率を0〜15点にマッピング"""
-    return min(15.0, max(0.0, (rate - 30.0) * 0.3))
+def _motor_score(rate: float, race_avg: float = 40.0) -> float:
+    """
+    モーター2連対率を0〜15点にマッピング（艦隊平均との相対評価）
+
+    艦隊平均 = 7.5点 (中央値)。
+    平均より5%高い → +1.5点 / 平均より5%低い → -1.5点。
+    これにより全艇が同レベルの良モーターでも相対差を正しく反映する。
+    """
+    return min(15.0, max(0.0, 7.5 + (rate - race_avg) * 0.3))
 
 
 def _boat_rate_score(rate: float) -> float:
@@ -122,25 +132,23 @@ def _local_rate_score(rate: float) -> float:
     return min(10.0, max(0.0, rate * 2.0))
 
 
-def morning_score(entry: EntryData) -> float:
+def morning_score(entry: EntryData, race_avg_motor: Optional[float] = None) -> float:
     """
     朝スコア計算 (最大65点程度 / cap 70点)
 
-    【修正点】
-    - player ブロックを national_win_rate + boat_rate に変更
-      (旧: national + local → local_win_rate が local ブロックと二重計上だったため修正)
-    - roughness ボーナス(旧: A1/A2に+5)を削除
-      (class_score と win_rate_score で既に A1 優位が反映されている)
+    Args:
+        race_avg_motor: 艦隊全艇のモーター2連対率平均。
+                        指定時は相対評価、None の場合は固定ベースライン(40%)評価。
     """
     # 選手力 (20点)
     player = min(20.0,
         _class_score(entry.racer_class)               # 10
-        + _win_rate_score(entry.national_win_rate)    # 5 (全国勝率)
-        + _boat_rate_score(entry.boat_rate)           # 5 (ボート2連対率: 新規追加)
+        + _win_rate_score(entry.national_win_rate)    # 5
+        + _boat_rate_score(entry.boat_rate)           # 5
     )
 
-    # モーター (15点)
-    motor = _motor_score(entry.motor_rate)
+    # モーター (15点) — 艦隊平均との相対評価
+    motor = _motor_score(entry.motor_rate, race_avg_motor if race_avg_motor is not None else 40.0)
 
     # 枠・コース (10点)
     lane = _lane_score(entry.lane)
@@ -148,7 +156,7 @@ def morning_score(entry: EntryData) -> float:
     # スタート力 (10点)
     st = _st_score(entry.avg_st, entry.f_count, entry.l_count)
 
-    # 当地相性 (10点)  ← local_win_rate はここだけで使用
+    # 当地相性 (10点)
     local = _local_rate_score(entry.local_win_rate)
 
     return min(70.0, player + motor + lane + st + local)
@@ -161,93 +169,92 @@ def pre_race_score(
     fleet_avg_ex_st: Optional[float] = None,
 ) -> float:
     """
-    直前スコア計算 (最大30点)
+    直前スコア計算 (理論最大33点 → cap 30点)
 
-    展示タイム10 + 展示ST5 + チルト/周回展示5 + 進入安定5 + 風波5
+    【配点】
+    展示タイム 13点 (スケール33、艦隊相対評価 — 最も信頼性の高い指標)
+    展示ST      5点 (艦隊相対評価)
+    チルト補正  4点
+    進入補正    8点 (実コース位置ベース — コース1=6点基準)
+    風波補正    3点
 
-    【修正点】
-    - 展示タイム/ST: 絶対値基準 → 艦隊平均との相対評価に変更
-      同じ 6.78s でも艦隊平均が 6.70s の場合と 6.85s の場合で意味が異なる
-    - チルト角を scoring に反映: +1.0〜+2.0 が最適ゾーン
-    - 進入コース: フラット-1.5 → 方向性考慮 (インへの動き=ボーナス / アウト=ペナルティ)
-
-    Args:
-        fleet_avg_ex_time: 同レースの全艇展示タイム平均 (None = フォールバック絶対評価)
-        fleet_avg_ex_st:   同レースの全艇展示ST平均    (None = フォールバック絶対評価)
+    【変更点 v5】
+    - 展示タイム: 10点→13点、スケール25→33（識別力強化）
+    - 進入コース: 方向性ベース→実コース位置ベースに刷新
+      「コース1進入=6pt基準、コース6=0pt。インへの移動ボーナス+0.25/枠」
+    - チルト: 5点→4点（展示タイムへの重み移動）
+    - 風波: 5点→3点（個体差より環境差に過ぎないため軽量化）
     """
     if entry.exhibition_time is None:
         return 0.0
 
-    # ── 展示タイム (10点) ── 艦隊相対評価 ───────────────────────────────────
+    # ── 展示タイム (13点) ── 艦隊相対評価・識別力強化 ────────────────────────
     if fleet_avg_ex_time is not None:
-        # 艦隊平均より 0.04s 速い → +1.0点 相当 (= 25点/秒スケール)
-        # 中間 (= 平均) → 5.0点
-        ex_time_score = max(0.0, min(10.0,
-            5.0 + (fleet_avg_ex_time - entry.exhibition_time) * 25.0
+        # スケール33: 0.03s 速い → +1.0点（旧: 0.04s → +1.0点）
+        # 中間(艦隊平均) → 6.5点
+        ex_time_score = max(0.0, min(13.0,
+            6.5 + (fleet_avg_ex_time - entry.exhibition_time) * 33.0
         ))
     else:
         # フォールバック: 6.90s 基準の絶対評価
-        ex_time_score = max(0.0, min(10.0,
-            (6.90 - entry.exhibition_time) * 25.0
+        ex_time_score = max(0.0, min(13.0,
+            (6.90 - entry.exhibition_time) * 33.0
         ))
 
     # ── 展示ST (5点) ── 艦隊相対評価 ─────────────────────────────────────────
     if entry.exhibition_st is not None:
         if fleet_avg_ex_st is not None:
-            # 艦隊平均より 0.01 早い → +0.5点
-            # 中間 (= 平均) → 2.5点
             ex_st_score = max(0.0, min(5.0,
                 2.5 + (fleet_avg_ex_st - entry.exhibition_st) * 50.0
             ))
         else:
-            # フォールバック: 0.10s 基準
             ex_st_score = max(0.0, min(5.0,
                 5.0 - (entry.exhibition_st - 0.10) * 50.0
             ))
     else:
         ex_st_score = 2.5  # データなし: 中間値
 
-    # ── チルト補正 (5点) ── 展示データあり時のみ ────────────────────────────
-    # チルト角の意味:
-    #   高い正値 (+2〜+3): 強攻めセット → タイムは速いがターン不安定リスク
-    #   適度な正値 (+0.5〜+2): 攻め気配 → バランス良く良い
-    #   0 付近: 標準セット → 安定
-    #   負値 (-3〜0): 守りセット → 安定だが伸び鈍い
+    # ── チルト補正 (4点) ── 展示データあり時のみ ─────────────────────────────
     if entry.tilt is not None:
         if 0.5 <= entry.tilt <= 2.0:
-            turn_score = 5.0  # 適度な攻めセット: 最良
+            turn_score = 4.0   # 適度な攻めセット: 最良
         elif entry.tilt > 2.0:
-            turn_score = 3.5  # 攻めすぎ: ターンリスク
+            turn_score = 2.8   # 攻めすぎ: ターンリスク
         elif entry.tilt < -1.0:
-            turn_score = 3.0  # 強守り: 伸びが鈍い
+            turn_score = 2.4   # 強守り: 伸び鈍い
         else:
-            turn_score = 4.5  # neutral 〜 軽い攻め
+            turn_score = 3.6   # neutral 〜 軽い攻め
     else:
-        # チルトデータなし: turn_stability フォールバック
-        turn_score = (entry.turn_stability or 0.5) * 5.0
+        turn_score = (entry.turn_stability or 0.5) * 4.0
 
-    # ── 進入コース補正 (5点) ── 方向性考慮 ──────────────────────────────────
-    # deviation = entry.lane - entry.approach_lane
-    # 正値 = インに動いた (有利: コース取り成功)
-    # 負値 = アウトに動いた (不利: 外に押し出された)
-    approach_score = 5.0 if condition.approach_stable else 2.0
+    # ── 進入コース補正 (最大8点) ── 実コース位置ベース ───────────────────────
+    # 設計思想:
+    #   コース有利度 = 実際の進入コース番号で決まる（コース1=6pt、コース6=0pt）
+    #   「インに動いた」ほど追加ボーナス(+0.25/枠差)
+    #   「アウトに動いた」場合は有利度のみ（移動ボーナスなし）
+    #
+    # 例:
+    #   1号艇コース1進入: 6.0点           (インキープ)
+    #   6号艇コース1進入: 6.0+1.25=7.25点 (大幅インへ移動)
+    #   1号艇コース3進入: 3.6-0.5=3.1点   (大幅アウトに押し出し)
+    #   1号艇コース4進入: 2.4-0.75=1.65点 (深刻なアウト進入)
     if entry.approach_lane is not None:
-        deviation = entry.lane - entry.approach_lane
-        if deviation > 0:
-            # インに動いた → コース取り成功ボーナス
-            # 6枠が1コース進入 (deviation=5) → +4.0点 最大
-            approach_score += deviation * 0.8
-        elif deviation < 0:
-            # アウトに動いた → 外押し出しペナルティ
-            # 1枠が2コース以降 (deviation=-1) → -1.2点
-            approach_score = max(0.0, approach_score + deviation * 1.2)
+        effective_course_score = max(0.0, 6.0 - (entry.approach_lane - 1) * 1.2)
+        movement = (entry.lane - entry.approach_lane) * 0.25  # 正=インへ移動
+        approach_score = min(8.0, max(0.0, effective_course_score + movement))
+        if not condition.approach_stable:
+            approach_score = max(0.0, approach_score - 1.5)
+    else:
+        # コース情報なし: 枠番から推定
+        approach_score = 4.0 if condition.approach_stable else 2.0
 
-    # ── 風・波補正 (5点) ─────────────────────────────────────────────────────
-    wind_penalty = min(3.0, condition.wind_speed * 0.4)
-    wave_penalty = min(2.0, condition.wave_height * 0.02)
-    condition_score = max(0.0, 5.0 - wind_penalty - wave_penalty)
+    # ── 風・波補正 (3点) ─────────────────────────────────────────────────────
+    wind_penalty = min(2.0, condition.wind_speed * 0.3)
+    wave_penalty = min(1.0, condition.wave_height * 0.01)
+    condition_score = max(0.0, 3.0 - wind_penalty - wave_penalty)
 
-    return min(30.0, ex_time_score + ex_st_score + turn_score + approach_score + condition_score)
+    total = ex_time_score + ex_st_score + turn_score + approach_score + condition_score
+    return min(30.0, total)
 
 
 def score_entries(entries: list[EntryData], condition: RaceCondition) -> list[EntryScore]:
@@ -255,16 +262,20 @@ def score_entries(entries: list[EntryData], condition: RaceCondition) -> list[En
     全艇のスコアを計算してソート済みリストを返す。
 
     展示データが揃っている場合は艦隊平均を計算して相対評価に使用する。
+    モーター2連対率も艦隊平均を計算して相対評価する。
     """
-    # 艦隊平均を計算 (展示データあり艇のみ)
-    ex_times = [e.exhibition_time for e in entries if e.exhibition_time is not None]
-    ex_sts   = [e.exhibition_st   for e in entries if e.exhibition_st   is not None]
-    fleet_avg_ex_time = sum(ex_times) / len(ex_times) if ex_times else None
-    fleet_avg_ex_st   = sum(ex_sts)   / len(ex_sts)   if ex_sts   else None
+    # 艦隊平均を計算
+    ex_times    = [e.exhibition_time for e in entries if e.exhibition_time is not None]
+    ex_sts      = [e.exhibition_st   for e in entries if e.exhibition_st   is not None]
+    motor_rates = [e.motor_rate      for e in entries if e.motor_rate      > 0]
+
+    fleet_avg_ex_time  = sum(ex_times)    / len(ex_times)    if ex_times    else None
+    fleet_avg_ex_st    = sum(ex_sts)      / len(ex_sts)      if ex_sts      else None
+    fleet_avg_motor    = sum(motor_rates) / len(motor_rates) if motor_rates else None
 
     scores = []
     for e in entries:
-        ms = morning_score(e)
+        ms = morning_score(e, race_avg_motor=fleet_avg_motor)
         ps = pre_race_score(e, condition, fleet_avg_ex_time, fleet_avg_ex_st)
         scores.append(EntryScore(lane=e.lane, racer_name=e.racer_name,
                                  morning_score=ms, pre_race_score=ps))
@@ -289,32 +300,37 @@ def decide(
     scores: list[EntryScore],
     condition: RaceCondition,
     pick_payout: Optional[int] = None,
+    lane1_approach: Optional[int] = None,
 ) -> dict:
     """
     買い / 候補 / ウォッチ / 見送り 判定
 
-    decision は "buy" | "candidate" | "skip" の3値 (DB制約を維持)。
+    decision は "buy" | "candidate" | "skip" の3値。
     watch は decision="skip" の一部で、reason に "[watch]" マーカーを付与。
-    フロントエンドは reason の "[watch]" を検出して表示を切り替える。
 
-    # ===== バックテスト調整済み閾値（2026-05-10 / 7日間・1226件） =====
-    # confidence = avg_top3 × (1 + gap/200)。avg_top3 の現実的上限 ≈ 75。
-    # buy:       confidence ≥ 67 かつ gap ≥ 10  (S ランク) ← 旧70 / ROI -10.6%
-    # candidate: confidence ≥ 59 かつ gap ≥ 7   (A ランク) ← 旧62
+    # ===== 閾値（2026-05-10 / 7日間バックテスト調整済み） =====
+    # confidence = avg_top3 × (1 + gap/150) × lane1_mul
+    #              ↑ gap重みを /200→/150 に強化（差が明確なレースを優先）
+    # buy:       confidence ≥ 67 かつ gap ≥ 10  (S ランク)
+    # candidate: confidence ≥ 59 かつ gap ≥ 7   (A ランク)
     # watch:     confidence ≥ 55 かつ gap ≥ 7   (B ランク, decision=skip)
     # skip:      それ未満                         (C ランク)
-    # ──────────────────────────────────────────────────────────────────
-    # [払戻フィルター] pick_payout が指定された場合、以下を適用:
-    #   buy     ← payout < 400円 → candidate に降格
-    #   candidate ← payout < 250円 → skip に降格
-    #   根拠: 的中率30%で損益分岐 = ¥333/¥100bet。¥400で安全マージン確保。
-    # ==============================================================
+    # ──────────────────────────────────────────────────────────
+    # [1号艇コース補正 v5]
+    #   lane1_approach が指定され、かつ3コース以降に進入している場合:
+    #   → 信頼度に 0.85 掛け（旧: 4位以下と同等の0.90）
+    #   → 理由: 1号艇がアウト進入の場合、三連複の結果は大幅に不安定化する
+    # ──────────────────────────────────────────────────────────
+    # [払戻フィルター]
+    #   buy   < ¥400 → candidate に降格
+    #   cand  < ¥250 → skip に降格
+    # ===========================================================
 
     Args:
-        scores:       EntryScore リスト（スコア降順）
-        condition:    レース条件（風速・波高・進入）
-        pick_payout:  三連複オッズから取得したpickの払戻額(¥/¥100bet)。
-                      None の場合は払戻フィルターをスキップ（朝スキャン等）。
+        scores:         EntryScore リスト（スコア降順）
+        condition:      レース条件（風速・波高・進入）
+        pick_payout:    三連複オッズの払戻額(¥/¥100bet)。None=フィルタなし。
+        lane1_approach: 1号艇の実際の進入コース番号。None=不明。
 
     Returns:
         {
@@ -327,7 +343,7 @@ def decide(
             "gap":        12.5,
         }
     """
-    gap = gap_between_3rd_4th(scores)
+    gap  = gap_between_3rd_4th(scores)
     pick = make_pick(scores)
     reasons: list[str] = []
 
@@ -344,45 +360,54 @@ def decide(
         reasons.append("進入が乱れる可能性あり")
 
     avg_top3   = sum(s.total for s in scores[:3]) / 3 if scores else 0.0
-    confidence = min(100.0, avg_top3 * (1 + gap / 200))
+    confidence = min(100.0, avg_top3 * (1 + gap / 150))  # gap重み強化
 
     # ── 1号艇インコース補正 ────────────────────────────────────────────────
-    # ボートレース三連複において 1号艇1着率は約50〜55%。
-    # 1号艇がスコア上位なら信頼度UP、pick外なら波乱リスクとして DOWN。
     lane1_rank = next((i for i, s in enumerate(scores) if s.lane == 1), -1)
-    if lane1_rank == 0:    # 1号艇1位 → 逃げ期待大
-        lane1_mul = 1.08
-    elif lane1_rank == 1:  # 2位 → 差し展開
-        lane1_mul = 1.04
-    elif lane1_rank == 2:  # 3位 → pick内ギリギリ
-        lane1_mul = 1.00
-    else:                  # 4位以下（pick外）→ 大波乱リスク
-        lane1_mul = 0.90
+
+    # 1号艇の実際の進入コースを確認（lane1_approach が指定された場合）
+    lane1_out_of_inside = (lane1_approach is not None and lane1_approach >= 3)
+
+    if lane1_rank == 0:
+        if lane1_out_of_inside:
+            # 1号艇スコア1位だが実際はコース3以降から発走 → インアドバンテージ消失
+            lane1_mul = 0.85
+            reasons.append(f"⚠️ 1号艇コース{lane1_approach}進入 — インアドバンテージ消失・波乱リスク")
+        else:
+            lane1_mul = 1.08   # 1号艇1位 + コース1: 逃げ期待大
+    elif lane1_rank == 1:
+        lane1_mul = 1.04       # 2位: 差し展開
+    elif lane1_rank == 2:
+        lane1_mul = 1.00       # 3位: pick内ギリギリ
+    else:
+        lane1_mul = 0.90       # 4位以下(pick外): 大波乱リスク
+
     confidence = min(100.0, confidence * lane1_mul)
 
     forced_skip = wind_rough or wave_rough or approach_unstable
+    is_watch    = False
 
-    is_watch = False
-
-    # 1号艇ランクを reason に記録（デバッグ・検証用）
     lane1_label = ["1位", "2位", "3位", "4位以下"][min(lane1_rank, 3)] if lane1_rank >= 0 else "不明"
+    approach_note = f" (コース{lane1_approach}進入)" if lane1_approach else ""
 
     if not forced_skip and confidence >= 67 and gap >= 10:
         decision = "buy"
         rank = "S"
-        reasons.append(f"上位3艇のスコア差が明確 (gap={gap:.1f} / 1号艇{lane1_label})")
+        reasons.append(f"上位3艇のスコア差が明確 (gap={gap:.1f} / 1号艇{lane1_label}{approach_note})")
 
     elif not forced_skip and confidence >= 59 and gap >= 7:
         decision = "candidate"
         rank = "A"
-        reasons.append(f"上位3艇が安定 (gap={gap:.1f} / 1号艇{lane1_label})")
+        reasons.append(f"上位3艇が安定 (gap={gap:.1f} / 1号艇{lane1_label}{approach_note})")
 
     elif not forced_skip and confidence >= 55 and gap >= 7:
-        # watch: 実投票対象外、検証候補
         decision  = "skip"
         rank      = "B"
         is_watch  = True
-        reasons.append(f"[watch] 検証候補 — gap={gap:.1f} / conf={round(confidence, 1)} / 1号艇{lane1_label}")
+        reasons.append(
+            f"[watch] 検証候補 — gap={gap:.1f} / conf={round(confidence, 1)} "
+            f"/ 1号艇{lane1_label}{approach_note}"
+        )
 
     else:
         decision = "skip"
@@ -390,12 +415,9 @@ def decide(
         if forced_skip:
             reasons.append(f"荒れ条件のため見送り (gap={gap:.1f})")
         else:
-            reasons.append(f"上位候補が絞れていない (gap={gap:.1f} / 1号艇{lane1_label})")
+            reasons.append(f"上位候補が絞れていない (gap={gap:.1f} / 1号艇{lane1_label}{approach_note})")
 
-    # ── 払戻フィルター（pick_payout が取得できた場合のみ適用）─────────────
-    # 低オッズ（人気すぎる組み合わせ）は期待値がマイナスになるため降格する。
-    # BUY:       ¥400未満 → candidate に降格（的中率30%での損益分岐は¥333）
-    # CANDIDATE: ¥250未満 → skip に降格
+    # ── 払戻フィルター ────────────────────────────────────────────────────────
     if pick_payout is not None and pick_payout > 0:
         reasons.append(f"三連複オッズ: ¥{pick_payout}/¥100")
         if decision == "buy" and pick_payout < 400:

@@ -100,7 +100,9 @@ def _process_race(code: str, name: str, race_no: int, target_date: date) -> Opti
         has_ex = any(e.exhibition_time is not None for e in entries)
 
         scores = score_entries(entries, condition)
-        pred = decide(scores, condition)
+        lane1_entry    = next((e for e in entries if e.lane == 1), None)
+        lane1_approach = lane1_entry.approach_lane if lane1_entry else None
+        pred = decide(scores, condition, lane1_approach=lane1_approach)
 
         res = fetch_result(code, race_no, target_date)
         hit = payout = popularity = trifecta = None
