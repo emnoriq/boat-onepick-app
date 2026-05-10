@@ -100,17 +100,19 @@ export default async function DebugPage({ searchParams }: Props) {
 
       {/* 判定基準 */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4 text-sm">
-        <p className="font-semibold text-blue-800 mb-2">現在の判定基準（暫定 — MVP30日検証後に再調整）</p>
+        <p className="font-semibold text-blue-800 mb-2">現在の判定基準（v5 / 2026-05-10 バックテスト調整済み）</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
           <div className="bg-red-100 rounded p-2">
             <p className="font-bold text-red-700">Sランク BUY</p>
-            <p className="text-red-600">confidence ≥ 70</p>
+            <p className="text-red-600">confidence ≥ 67</p>
             <p className="text-red-600">gap ≥ 10点</p>
+            <p className="text-red-500 mt-0.5 font-semibold">展示確認必須</p>
           </div>
           <div className="bg-orange-100 rounded p-2">
             <p className="font-bold text-orange-700">Aランク CANDIDATE</p>
-            <p className="text-orange-600">confidence ≥ 62</p>
+            <p className="text-orange-600">confidence ≥ 59</p>
             <p className="text-orange-600">gap ≥ 7点</p>
+            <p className="text-orange-500 mt-0.5 font-semibold">展示確認必須</p>
           </div>
           <div className="bg-blue-100 rounded p-2">
             <p className="font-bold text-blue-700">Bランク WATCH</p>
@@ -124,7 +126,8 @@ export default async function DebugPage({ searchParams }: Props) {
           </div>
         </div>
         <p className="text-xs text-gray-500 mt-2">
-          confidence = avg_top3_score × (1 + gap/200) × 1号艇補正 ／ 展示タイム・STは艦隊平均との相対評価
+          confidence = avg_top3 × (1 + gap/<strong>150</strong>) × 1号艇補正
+          ／ モータースコア艦隊相対評価・展示タイム13点(スケール33)・1号艇コース3以降進入は0.85ペナルティ
         </p>
       </div>
 
