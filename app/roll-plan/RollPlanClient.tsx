@@ -230,16 +230,107 @@ function StepRow({
   );
 }
 
+// ── 転がし金額チェーン ───────────────────────────────────────────────────────
+
+/** 転がし金額チェーンを計算する */
+function calcRollingChain(steps: RollStep[], initialBet = 1000): Array<{
+  bet: number;
+  result: "hit" | "miss" | "pending";
+  returnAmount: number | null;
+}> {
+  const chain: Array<{ bet: number; result: "hit" | "miss" | "pending"; returnAmount: number | null }> = [];
+  let current = initialBet;
+
+  for (const step of steps) {
+    const isDone = step.stepStatus === "DONE" || step.stepStatus === "RESULT_WAIT";
+    if (isDone && step.prediction_hit === true && step.payout !== null) {
+      const units = Math.floor(current / 100);
+      const returned = units * step.payout;
+      chain.push({ bet: current, result: "hit", returnAmount: returned });
+      current = returned;
+    } else if (isDone && step.prediction_hit === false) {
+      chain.push({ bet: current, result: "miss", returnAmount: 0 });
+      break;
+    } else {
+      chain.push({ bet: current, result: "pending", returnAmount: null });
+      // 以降は予測表示（avg 倍率 20x を仮定）
+      current = current * 20;
+    }
+  }
+  return chain;
+}
+
+function RollingChainBar({ steps, initialBet = 1000 }: { steps: RollStep[]; initialBet?: number }) {
+  const chain = calcRollingChain(steps, initialBet);
+
+  return (
+    <div className="bg-gray-50 border rounded-lg p-3 my-2">
+      <div className="text-xs text-gray-500 mb-2 font-semibold">転がし金額チェーン</div>
+      <div className="flex items-center gap-1 flex-wrap">
+        {/* 初期投資 */}
+        <div className="text-sm font-bold text-gray-700">¥{initialBet.toLocaleString()}</div>
+
+        {chain.map((leg, i) => (
+          <div key={i} className="flex items-center gap-1">
+            <span className="text-gray-300 text-sm">→</span>
+            {leg.result === "hit" ? (
+              <div className="text-center">
+                <div className="text-xs text-green-600 font-bold">✅ STEP{i + 1}的中</div>
+                <div className="text-sm font-bold text-green-700">
+                  ¥{leg.returnAmount!.toLocaleString()}
+                </div>
+              </div>
+            ) : leg.result === "miss" ? (
+              <div className="text-center">
+                <div className="text-xs text-red-500 font-bold">❌ STEP{i + 1}外れ</div>
+                <div className="text-sm font-bold text-red-500">終了</div>
+              </div>
+            ) : (
+              <div className="text-center">
+                <div className="text-xs text-gray-400">STEP{i + 1}</div>
+                <div className="text-sm font-bold text-gray-400">¥??</div>
+              </div>
+            )}
+          </div>
+        ))}
+
+        {/* 全的中時の最終合計 */}
+        {chain.length === steps.length && chain.every((c) => c.result === "hit") && (
+          <div className="flex items-center gap-1">
+            <span className="text-gray-300 text-sm">→</span>
+            <div className="bg-yellow-50 border border-yellow-300 rounded px-2 py-1 text-center">
+              <div className="text-xs text-yellow-600 font-bold">🎉 全的中！</div>
+              <div className="text-base font-black text-yellow-700">
+                ¥{chain[chain.length - 1].returnAmount!.toLocaleString()}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+      {/* ステータスサマリ */}
+      <div className="mt-2 text-xs text-gray-400">
+        初期投資 ¥{initialBet.toLocaleString()} ／ ステップ間隔最短 {fmtInterval(steps.reduce<number | null>((min, s, i, arr) => {
+          if (i === 0) return null;
+          const diff = Math.round((new Date(s.close_time).getTime() - new Date(arr[i-1].close_time).getTime()) / 60000);
+          return min === null ? diff : Math.min(min, diff);
+        }, null))} ／ 三連複1点
+      </div>
+    </div>
+  );
+}
+
 // ── ルートカード ─────────────────────────────────────────────────────────────
 
 function RouteCard({
   route,
   label,
   defaultOpen = true,
+  initialBet = 1000,
 }: {
   route: RollRoute;
   label: string;
   defaultOpen?: boolean;
+  initialBet?: number;
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -275,15 +366,19 @@ function RouteCard({
         </div>
       </button>
 
+      {/* 転がし金額チェーン */}
+      {open && (
+        <div className="px-3 pt-2">
+          <RollingChainBar steps={route.steps} initialBet={initialBet} />
+        </div>
+      )}
+
       {/* ステップ一覧 */}
       {open && (
         <div className="p-3 space-y-2">
           {route.steps.map((step, i) => (
             <StepRow key={step.race_id} step={step} stepNum={i + 1} />
           ))}
-          <div className="text-xs text-gray-400 text-right pt-1">
-            最短間隔 {fmtInterval(route.minIntervalMinutes)} ／ 想定初期投資額 ¥100
-          </div>
         </div>
       )}
     </div>

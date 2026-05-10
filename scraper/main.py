@@ -26,6 +26,7 @@ from fetch_races import fetch_today_schedule, fetch_race_list
 from fetch_entries import fetch_entries
 from fetch_exhibition import fetch_exhibition
 from fetch_results import fetch_result
+from fetch_odds import fetch_trifecta_box_odds, get_pick_payout
 from scoring import score_entries, decide, RaceCondition, EntryData
 
 logging.basicConfig(level=logging.INFO,
@@ -58,7 +59,7 @@ def _fetch_race_list_worker(args: tuple) -> tuple:
 def _pre_race_worker(args: tuple) -> tuple:
     """
     Thread worker: 1レースの entries + exhibition を順次取得
-    Returns: (race_id, name, race_no, entries: list[EntryData] | None, condition | None)
+    Returns: (race_id, name, race_no, entries: list[EntryData] | None, condition | None, code)
     """
     code, name, race_no, race_id, today, existing_entries = args
     # existing_entries: list[dict] from DB, None = 未取得
@@ -68,7 +69,7 @@ def _pre_race_worker(args: tuple) -> tuple:
             entry_objects = fetch_entries(code, race_no, today)
             if not entry_objects:
                 logger.warning("%s %dR: 出走表取得失敗", name, race_no)
-                return (race_id, name, race_no, None, None)
+                return (race_id, name, race_no, None, None, code)
             # EntryData → dict 変換 (race_id を付与)
             existing_entries = [{
                 "race_id": race_id,
@@ -100,10 +101,10 @@ def _pre_race_worker(args: tuple) -> tuple:
         # ③ 展示情報取得（entries を in-place で更新）
         condition = fetch_exhibition(code, race_no, today, entries)
 
-        return (race_id, name, race_no, entries, condition)
+        return (race_id, name, race_no, entries, condition, code)
     except Exception as e:
         logger.error("_pre_race_worker失敗 %s %dR: %s", name, race_no, e)
-        return (race_id, name, race_no, None, None)
+        return (race_id, name, race_no, None, None, code)
 
 
 def _result_worker(args: tuple) -> tuple:
@@ -371,7 +372,7 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
     counts = {"buy": 0, "candidate": 0, "watch": 0, "skip": 0}
     ex_ok_count = 0
 
-    for race_id, name, race_no, entries, condition in results:
+    for race_id, name, race_no, entries, condition, code in results:
         if entries is None:
             continue
 
@@ -381,7 +382,13 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
 
         scores = score_entries(entries, condition)
         score_map = {s.lane: s.total for s in scores}
-        pred = decide(scores, condition)
+
+        # 三連複オッズを取得してペイロードフィルタに使用
+        top3_lanes = [str(scores[i].lane) for i in range(min(3, len(scores)))]
+        initial_pick = "-".join(sorted(top3_lanes, key=int))
+        odds = fetch_trifecta_box_odds(code, race_no, today)
+        pick_payout = get_pick_payout(odds, initial_pick)
+        pred = decide(scores, condition, pick_payout=pick_payout)
 
         # entries ペイロード (展示情報・チルト込み)
         all_entries_payload.extend([{
@@ -481,7 +488,7 @@ def pre_race_scan_single(today: date, stadium_name: str, race_no: int) -> None:
     result_tuple = _pre_race_worker(
         (code, stadium_name, race_no, race_id, today, entries_data)
     )
-    _, _, _, entries, condition = result_tuple
+    _, _, _, entries, condition, _ = result_tuple
 
     if entries is None:
         logger.error("entries の取得に失敗しました")
@@ -493,7 +500,17 @@ def pre_race_scan_single(today: date, stadium_name: str, race_no: int) -> None:
 
     scores = score_entries(entries, condition)
     score_map = {s.lane: s.total for s in scores}
-    pred = decide(scores, condition)
+
+    # 三連複オッズを取得してペイロードフィルタに使用
+    top3_lanes = [str(scores[i].lane) for i in range(min(3, len(scores)))]
+    initial_pick = "-".join(sorted(top3_lanes, key=int))
+    odds = fetch_trifecta_box_odds(code, race_no, today)
+    pick_payout = get_pick_payout(odds, initial_pick)
+    if pick_payout is not None:
+        logger.info("三連複オッズ (pick=%s): ¥%d/¥100", initial_pick, pick_payout)
+    else:
+        logger.info("三連複オッズ: 取得できませんでした (pick=%s)", initial_pick)
+    pred = decide(scores, condition, pick_payout=pick_payout)
 
     reason_lines = pred["reason"]
     if not ex_ok:

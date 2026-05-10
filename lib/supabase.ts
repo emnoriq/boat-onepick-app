@@ -570,7 +570,7 @@ export async function getScheduleData(date: string): Promise<{
     .from("races")
     .select(`
       id, stadium, race_no, close_time, status,
-      predictions(pick, confidence, decision, reason, is_hit),
+      predictions(pick, confidence, decision, reason, is_hit, gap),
       results(trifecta_result, payout, popularity, prediction_hit)
     `)
     .eq("race_date", date)

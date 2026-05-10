@@ -285,7 +285,11 @@ def gap_between_3rd_4th(scores: list[EntryScore]) -> float:
     return scores[2].total - scores[3].total
 
 
-def decide(scores: list[EntryScore], condition: RaceCondition) -> dict:
+def decide(
+    scores: list[EntryScore],
+    condition: RaceCondition,
+    pick_payout: Optional[int] = None,
+) -> dict:
     """
     買い / 候補 / ウォッチ / 見送り 判定
 
@@ -299,17 +303,27 @@ def decide(scores: list[EntryScore], condition: RaceCondition) -> dict:
     # candidate: confidence ≥ 59 かつ gap ≥ 7   (A ランク) ← 旧62
     # watch:     confidence ≥ 55 かつ gap ≥ 7   (B ランク, decision=skip)
     # skip:      それ未満                         (C ランク)
-    # ※ ROIはまだマイナス。30日データ蓄積後に再調整予定。
+    # ──────────────────────────────────────────────────────────────────
+    # [払戻フィルター] pick_payout が指定された場合、以下を適用:
+    #   buy     ← payout < 400円 → candidate に降格
+    #   candidate ← payout < 250円 → skip に降格
+    #   根拠: 的中率30%で損益分岐 = ¥333/¥100bet。¥400で安全マージン確保。
     # ==============================================================
+
+    Args:
+        scores:       EntryScore リスト（スコア降順）
+        condition:    レース条件（風速・波高・進入）
+        pick_payout:  三連複オッズから取得したpickの払戻額(¥/¥100bet)。
+                      None の場合は払戻フィルターをスキップ（朝スキャン等）。
 
     Returns:
         {
             "pick":       "1-2-4",
             "confidence": 65.0,
             "decision":   "buy" | "candidate" | "skip",
-            "is_watch":   False,   # True = watch 候補 (decision=skip のまま)
+            "is_watch":   False,
             "rank":       "S" | "A" | "B" | "C",
-            "reason":     [...],   # "[watch]" が含まれる場合は watch 候補
+            "reason":     [...],
             "gap":        12.5,
         }
     """
@@ -377,6 +391,21 @@ def decide(scores: list[EntryScore], condition: RaceCondition) -> dict:
             reasons.append(f"荒れ条件のため見送り (gap={gap:.1f})")
         else:
             reasons.append(f"上位候補が絞れていない (gap={gap:.1f} / 1号艇{lane1_label})")
+
+    # ── 払戻フィルター（pick_payout が取得できた場合のみ適用）─────────────
+    # 低オッズ（人気すぎる組み合わせ）は期待値がマイナスになるため降格する。
+    # BUY:       ¥400未満 → candidate に降格（的中率30%での損益分岐は¥333）
+    # CANDIDATE: ¥250未満 → skip に降格
+    if pick_payout is not None and pick_payout > 0:
+        reasons.append(f"三連複オッズ: ¥{pick_payout}/¥100")
+        if decision == "buy" and pick_payout < 400:
+            decision = "candidate"
+            rank = "A"
+            reasons.append(f"⚠️ 払戻¥{pick_payout} < ¥400 → candidate に降格")
+        elif decision == "candidate" and pick_payout < 250:
+            decision = "skip"
+            rank = "C"
+            reasons.append(f"⚠️ 払戻¥{pick_payout} < ¥250 → skip に降格")
 
     return {
         "pick":       pick,
