@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       days:
-        description: "過去何日分を検証するか (デフォルト: 30)"
+        description: "過去何日分を検証するか (デフォルト: 14)"
         required: false
-        default: "30"
+        default: "14"
       start:
         description: "開始日 YYYY-MM-DD (days より優先)"
         required: false
@@ -19,13 +19,17 @@ on:
         required: false
         default: ""
       workers:
-        description: "並列ワーカー数 (デフォルト: 3 / 最大4推奨)"
+        description: "並列ワーカー数 (デフォルト: 4 / 最大4推奨)"
         required: false
-        default: "3"
+        default: "4"
       stadiums:
-        description: "場コードをカンマ区切り (例: 08,12,22 / 省略時: 全18場)"
+        description: "場コードをカンマ区切り (例: 08,12,22 / 省略時: 全24場)"
         required: false
         default: ""
+      interval:
+        description: "HTTPリクエスト間スリープ秒 (デフォルト: 0.5 / 本番は 1.0〜2.0)"
+        required: false
+        default: "0.5"
 
 jobs:
   backtest:
@@ -50,7 +54,8 @@ jobs:
           echo "start    : ${{ github.event.inputs.start || '(days から計算)' }}"
           echo "end      : ${{ github.event.inputs.end || '昨日' }}"
           echo "workers  : ${{ github.event.inputs.workers }}"
-          echo "stadiums : ${{ github.event.inputs.stadiums || '全18場' }}"
+          echo "stadiums : ${{ github.event.inputs.stadiums || '全24場' }}"
+          echo "interval : ${{ github.event.inputs.interval }}s"
           echo "UTC now  : $(date -u '+%Y-%m-%d %H:%M:%S')"
           echo "JST now  : $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M:%S')"
 
@@ -68,7 +73,8 @@ jobs:
             ARGS="$ARGS --days ${{ github.event.inputs.days || '30' }}"
           fi
 
-          ARGS="$ARGS --workers ${{ github.event.inputs.workers || '3' }}"
+          ARGS="$ARGS --workers ${{ github.event.inputs.workers || '4' }}"
+          ARGS="$ARGS --interval ${{ github.event.inputs.interval || '0.5' }}"
 
           if [ -n "${{ github.event.inputs.stadiums }}" ]; then
             ARGS="$ARGS --stadiums ${{ github.event.inputs.stadiums }}"

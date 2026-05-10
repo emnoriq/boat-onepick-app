@@ -26,6 +26,11 @@ from typing import Optional
 from dotenv import load_dotenv
 load_dotenv()
 
+import fetch_races as _fetch_races_mod
+import fetch_entries as _fetch_entries_mod
+import fetch_exhibition as _fetch_exhibition_mod
+import fetch_results as _fetch_results_mod
+
 from fetch_races import fetch_race_list
 from fetch_entries import fetch_entries
 from fetch_exhibition import fetch_exhibition
@@ -39,6 +44,15 @@ logging.getLogger("fetch_entries").setLevel(logging.WARNING)
 logging.getLogger("fetch_results").setLevel(logging.WARNING)
 logging.getLogger("fetch_races").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
+
+
+def _patch_intervals(interval: float) -> None:
+    """全 fetch モジュールの REQUEST_INTERVAL を上書きする（バックテスト高速化用）"""
+    _fetch_races_mod.REQUEST_INTERVAL     = interval
+    _fetch_entries_mod.REQUEST_INTERVAL   = interval
+    _fetch_exhibition_mod.REQUEST_INTERVAL = interval
+    _fetch_results_mod.REQUEST_INTERVAL   = interval
+    logger.info("REQUEST_INTERVAL を %.1fs に設定", interval)
 
 JST = timezone(timedelta(hours=9))
 
@@ -283,8 +297,13 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=3,
                         help="並列ワーカー数 (デフォルト: 3)")
     parser.add_argument("--stadiums", default=None,
-                        help="場コードをカンマ区切り 例: 08,12,22 (省略時: 全18場)")
+                        help="場コードをカンマ区切り 例: 08,12,22 (省略時: 全24場)")
+    parser.add_argument("--interval", type=float, default=0.5,
+                        help="HTTP リクエスト間スリープ秒 (デフォルト: 0.5 / 本番は 1.0〜2.0)")
     args = parser.parse_args()
+
+    # バックテスト用に REQUEST_INTERVAL を一括設定
+    _patch_intervals(args.interval)
 
     now_jst  = datetime.now(JST).date()
     yesterday = now_jst - timedelta(days=1)
@@ -300,7 +319,8 @@ def main() -> None:
 
     logger.info("=== バックテスト開始 ===")
     logger.info("期間: %s 〜 %s (%d日)", start, end, (end - start).days + 1)
-    logger.info("対象場: %d場 / 並列ワーカー: %d", len(stadium_codes), args.workers)
+    logger.info("対象場: %d場 / 並列ワーカー: %d / interval: %.1fs",
+                len(stadium_codes), args.workers, args.interval)
 
     all_results: list[BtResult] = []
     total_days = (end - start).days + 1
