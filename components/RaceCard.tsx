@@ -1,49 +1,71 @@
 import Link from "next/link";
 import { RaceWithPrediction } from "@/lib/supabase";
-import { formatCloseTime, decisionLabel, rankLabel, rankColor, hitLabel } from "@/lib/format";
+import { formatCloseTime, rankColor, hitLabel } from "@/lib/format";
 import PredictionBadge from "./PredictionBadge";
 
-type Props = { race: RaceWithPrediction };
+type Props = {
+  race: RaceWithPrediction;
+  /** 信頼度ランキングの順位（1始まり）。省略時は非表示 */
+  rank?: number;
+};
 
-export default function RaceCard({ race }: Props) {
+export default function RaceCard({ race, rank }: Props) {
   const prediction = race.predictions ?? null;
   const result = race.results ?? null;
   if (!prediction) return null;
 
-  const rank = rankLabel(prediction.confidence);
-  const colorClass = rankColor(prediction.confidence);
+  const confColor = rankColor(prediction.confidence);
 
   return (
     <Link href={`/races/${race.id}`}>
       <div className="border rounded-xl p-4 mb-3 hover:shadow-md transition-shadow bg-white cursor-pointer">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm text-gray-500">
+
+        {/* ヘッダー行 */}
+        <div className="flex items-center gap-2 mb-2">
+          {rank != null && (
+            <span className={`text-lg font-black w-7 shrink-0 ${
+              rank === 1 ? "text-yellow-500" :
+              rank === 2 ? "text-gray-400" :
+              rank === 3 ? "text-amber-700" :
+              "text-gray-300"
+            }`}>
+              #{rank}
+            </span>
+          )}
+          <span className="text-sm text-gray-500 flex-1">
             {race.stadium} {race.race_no}R &nbsp;締切 {formatCloseTime(race.close_time)}
           </span>
           <PredictionBadge decision={prediction.decision} />
         </div>
 
+        {/* メイン：pick + confidence */}
         <div className="flex items-center gap-4">
-          <span className={`text-3xl font-black ${colorClass}`}>{rank}</span>
-          <div>
+          <div className="flex-1">
             <div className="text-lg font-bold tracking-widest">
               三連複 {prediction.pick}
             </div>
-            <div className="text-sm text-gray-500">
-              信頼度 {prediction.confidence}点
+            <div className={`text-sm font-semibold ${confColor}`}>
+              信頼度 {Number(prediction.confidence).toFixed(1)}点
+              {prediction.gap != null && (
+                <span className="text-gray-400 font-normal ml-2">gap {Number(prediction.gap).toFixed(1)}</span>
+              )}
             </div>
           </div>
           {result && (
-            <span className={`ml-auto text-sm font-semibold ${
+            <span className={`text-sm font-semibold shrink-0 ${
               result.prediction_hit ? "text-green-600" : "text-gray-400"
             }`}>
               {hitLabel(result.prediction_hit)}
+              {result.prediction_hit && result.payout != null && (
+                <span className="ml-1 text-xs">¥{result.payout.toLocaleString()}</span>
+              )}
             </span>
           )}
         </div>
 
+        {/* reason（最初の2行） */}
         {prediction.reason && (
-          <ul className="mt-2 text-xs text-gray-600 list-disc list-inside space-y-0.5">
+          <ul className="mt-2 text-xs text-gray-500 list-disc list-inside space-y-0.5">
             {prediction.reason.split("\n").filter(Boolean).slice(0, 2).map((r, i) => (
               <li key={i}>{r}</li>
             ))}
