@@ -293,12 +293,13 @@ def decide(scores: list[EntryScore], condition: RaceCondition) -> dict:
     watch は decision="skip" の一部で、reason に "[watch]" マーカーを付与。
     フロントエンドは reason の "[watch]" を検出して表示を切り替える。
 
-    # ===== MVP検証用の暫定閾値（30日分データ蓄積後に再調整する） =====
+    # ===== バックテスト調整済み閾値（2026-05-10 / 7日間・1226件） =====
     # confidence = avg_top3 × (1 + gap/200)。avg_top3 の現実的上限 ≈ 75。
-    # buy:       confidence ≥ 70 かつ gap ≥ 10  (S ランク)
-    # candidate: confidence ≥ 62 かつ gap ≥ 7   (A ランク)
+    # buy:       confidence ≥ 67 かつ gap ≥ 10  (S ランク) ← 旧70 / ROI -10.6%
+    # candidate: confidence ≥ 59 かつ gap ≥ 7   (A ランク) ← 旧62
     # watch:     confidence ≥ 55 かつ gap ≥ 7   (B ランク, decision=skip)
     # skip:      それ未満                         (C ランク)
+    # ※ ROIはまだマイナス。30日データ蓄積後に再調整予定。
     # ==============================================================
 
     Returns:
@@ -352,12 +353,12 @@ def decide(scores: list[EntryScore], condition: RaceCondition) -> dict:
     # 1号艇ランクを reason に記録（デバッグ・検証用）
     lane1_label = ["1位", "2位", "3位", "4位以下"][min(lane1_rank, 3)] if lane1_rank >= 0 else "不明"
 
-    if not forced_skip and confidence >= 70 and gap >= 10:
+    if not forced_skip and confidence >= 67 and gap >= 10:
         decision = "buy"
         rank = "S"
         reasons.append(f"上位3艇のスコア差が明確 (gap={gap:.1f} / 1号艇{lane1_label})")
 
-    elif not forced_skip and confidence >= 62 and gap >= 7:
+    elif not forced_skip and confidence >= 59 and gap >= 7:
         decision = "candidate"
         rank = "A"
         reasons.append(f"上位3艇が安定 (gap={gap:.1f} / 1号艇{lane1_label})")
