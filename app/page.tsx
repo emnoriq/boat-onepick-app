@@ -30,8 +30,18 @@ export default async function HomePage() {
   ]);
   const plan = buildRollPlan(rows);
 
-  const buyRaces       = races.filter((r) => r.predictions?.decision === "buy");
-  const candidateRaces = races.filter((r) => r.predictions?.decision === "candidate");
+  // 展示データ取得済みのもののみ表示（朝スキャン暫定判定は除外）
+  const hasExhibition = (r: typeof races[number]) =>
+    r.predictions?.reason != null &&
+    !r.predictions.reason.includes("[展示未取得]");
+
+  const buyRaces       = races.filter((r) => r.predictions?.decision === "buy"       && hasExhibition(r));
+  const candidateRaces = races.filter((r) => r.predictions?.decision === "candidate" && hasExhibition(r));
+  // 朝判定のBUY/CANDIDATE（展示未取得）は別枠で扱う（後でpre_raceが上書きする）
+  const morningOnlyBuy = races.filter((r) =>
+    (r.predictions?.decision === "buy" || r.predictions?.decision === "candidate") &&
+    !hasExhibition(r)
+  );
 
   // 転がし判定バナーの色
   const bannerStyle =
@@ -109,30 +119,48 @@ export default async function HomePage() {
       {/* ── 個別レース一覧 ────────────────────────────────── */}
       {buyRaces.length === 0 && candidateRaces.length === 0 && (
         <div className="text-center py-10 text-gray-400">
-          <p className="text-base font-semibold mb-2">本日の1点勝負レースはありません</p>
-          <ul className="text-sm space-y-1 text-left inline-block">
-            <li>・上位3艇が明確なレースが少ない</li>
-            <li>・4番手との差が小さい</li>
-            <li>・直前情報で不安要素あり</li>
-          </ul>
+          {morningOnlyBuy.length > 0 ? (
+            <>
+              <p className="text-base font-semibold mb-1 text-amber-500">展示情報を取得中…</p>
+              <p className="text-sm">{morningOnlyBuy.length}件の候補が直前スキャン待ちです</p>
+            </>
+          ) : (
+            <>
+              <p className="text-base font-semibold mb-2">本日の1点勝負レースはありません</p>
+              <ul className="text-sm space-y-1 text-left inline-block">
+                <li>・上位3艇が明確なレースが少ない</li>
+                <li>・4番手との差が小さい</li>
+                <li>・直前情報で不安要素あり</li>
+              </ul>
+            </>
+          )}
         </div>
       )}
 
       {buyRaces.length > 0 && (
         <section className="mb-6">
           <h2 className="text-sm font-semibold text-red-600 uppercase tracking-wider mb-2">
-            Sランク（買い）
+            Sランク（買い）✓展示確認済
           </h2>
           {buyRaces.map((r) => <RaceCard key={r.id} race={r} />)}
         </section>
       )}
 
       {candidateRaces.length > 0 && (
-        <section>
+        <section className="mb-6">
           <h2 className="text-sm font-semibold text-orange-500 uppercase tracking-wider mb-2">
-            Aランク（候補）
+            Aランク（候補）✓展示確認済
           </h2>
           {candidateRaces.map((r) => <RaceCard key={r.id} race={r} />)}
+        </section>
+      )}
+
+      {morningOnlyBuy.length > 0 && buyRaces.length === 0 && candidateRaces.length === 0 && (
+        <section className="mb-6 opacity-60">
+          <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">
+            △ 朝判定（展示待ち — 直前スキャン後に更新）
+          </h2>
+          {morningOnlyBuy.slice(0, 3).map((r) => <RaceCard key={r.id} race={r} />)}
         </section>
       )}
 
