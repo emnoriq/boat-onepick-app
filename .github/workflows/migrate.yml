@@ -1,0 +1,70 @@
+name: DB Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      sql:
+        description: "実行するSQL"
+        required: true
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: scraper/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r scraper/requirements.txt
+
+      - name: Run migration
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python3 - <<'EOF'
+          import os, requests
+
+          url = os.environ["SUPABASE_URL"]
+          key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+          sql = """${{ github.event.inputs.sql }}"""
+
+          print(f"実行SQL: {sql[:100]}...")
+
+          # Supabase Management API 経由で SQL 実行
+          project_ref = url.replace("https://", "").split(".")[0]
+          resp = requests.post(
+              f"https://api.supabase.com/v1/projects/{project_ref}/database/query",
+              headers={
+                  "Authorization": f"Bearer {key}",
+                  "Content-Type": "application/json",
+              },
+              json={"query": sql},
+              timeout=30,
+          )
+          print(f"status: {resp.status_code}")
+          print(f"body: {resp.text[:500]}")
+
+          if resp.status_code not in (200, 201):
+              # Management API が使えない場合は psql 経由を試みる
+              print("Management API 失敗 → PostgREST RPC を試みます")
+              resp2 = requests.post(
+                  f"{url}/rest/v1/rpc/exec_sql",
+                  headers={
+                      "apikey": key,
+                      "Authorization": f"Bearer {key}",
+                      "Content-Type": "application/json",
+                  },
+                  json={"sql": sql},
+                  timeout=30,
+              )
+              print(f"RPC status: {resp2.status_code}")
+              print(f"RPC body: {resp2.text[:500]}")
+          EOF
