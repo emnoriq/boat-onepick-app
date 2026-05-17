@@ -22,28 +22,33 @@ jobs:
           cache-dependency-path: scraper/requirements.txt
 
       - name: Install dependencies
-        run: pip install -r scraper/requirements.txt
+        run: pip install requests
 
       - name: Run migration
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           python3 - <<'EOF'
-          import os, requests
+          import os, requests, sys
 
           url = os.environ["SUPABASE_URL"]
-          key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+          token = os.environ.get("SUPABASE_ACCESS_TOKEN", "")
           sql = """${{ github.event.inputs.sql }}"""
 
-          print(f"実行SQL: {sql[:100]}...")
+          if not token:
+              print("❌ SUPABASE_ACCESS_TOKEN が未設定です")
+              print("   https://supabase.com/dashboard/account/tokens でトークンを作成し")
+              print("   GitHub Secrets に SUPABASE_ACCESS_TOKEN として登録してください")
+              sys.exit(1)
 
-          # Supabase Management API 経由で SQL 実行
+          print(f"実行SQL: {sql[:120]}")
+
           project_ref = url.replace("https://", "").split(".")[0]
           resp = requests.post(
               f"https://api.supabase.com/v1/projects/{project_ref}/database/query",
               headers={
-                  "Authorization": f"Bearer {key}",
+                  "Authorization": f"Bearer {token}",
                   "Content-Type": "application/json",
               },
               json={"query": sql},
@@ -53,18 +58,8 @@ jobs:
           print(f"body: {resp.text[:500]}")
 
           if resp.status_code not in (200, 201):
-              # Management API が使えない場合は psql 経由を試みる
-              print("Management API 失敗 → PostgREST RPC を試みます")
-              resp2 = requests.post(
-                  f"{url}/rest/v1/rpc/exec_sql",
-                  headers={
-                      "apikey": key,
-                      "Authorization": f"Bearer {key}",
-                      "Content-Type": "application/json",
-                  },
-                  json={"sql": sql},
-                  timeout=30,
-              )
-              print(f"RPC status: {resp2.status_code}")
-              print(f"RPC body: {resp2.text[:500]}")
+              print(f"❌ マイグレーション失敗 (status={resp.status_code})")
+              sys.exit(1)
+
+          print("✅ マイグレーション成功")
           EOF
