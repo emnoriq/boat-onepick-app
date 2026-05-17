@@ -46,6 +46,32 @@ export default async function RaceDetailPage({ params }: Props) {
             </div>
           </div>
 
+          {/* EV + Kelly 表示 */}
+          {(prediction.best_ev != null || prediction.kelly_fraction != null) && (
+            <div className="flex flex-wrap gap-2 mb-3">
+              {prediction.best_ev != null && (
+                <div className={`inline-flex items-center gap-1 px-3 py-1 rounded-lg text-sm font-bold ${
+                  prediction.best_ev > 0.15 ? "bg-green-100 text-green-700" :
+                  prediction.best_ev > 0    ? "bg-emerald-50 text-emerald-600" :
+                                              "bg-gray-100 text-gray-400"
+                }`}>
+                  期待値 {prediction.best_ev >= 0 ? "+" : ""}{(prediction.best_ev * 100).toFixed(1)}%
+                </div>
+              )}
+              {prediction.kelly_fraction != null && prediction.kelly_fraction > 0 && (
+                <div className="bg-purple-50 border border-purple-200 rounded-lg px-3 py-1">
+                  <div className="text-xs text-purple-500 font-semibold">Kelly推奨賭け率</div>
+                  <div className="text-sm font-bold text-purple-700">
+                    {(prediction.kelly_fraction * 100).toFixed(1)}%
+                    <span className="text-xs font-normal text-purple-500 ml-2">
+                      ¥1万→¥{Math.round(10000 * prediction.kelly_fraction / 100) * 100}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {prediction.reason && (
             <ul className="text-sm text-gray-700 list-disc list-inside space-y-1">
               {prediction.reason.split("\n").filter(Boolean).map((r, i) => (

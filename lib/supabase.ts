@@ -44,9 +44,11 @@ export type Prediction = {
   confidence: number;
   decision: "buy" | "candidate" | "skip";
   reason: string | null;
-  gap: number | null;       // 3位-4位スコア差（新設計から保存）
+  gap: number | null;          // 3位-4位スコア差（新設計から保存）
   rank_today: number | null;
   is_hit: boolean | null;
+  best_ev: number | null;      // 期待値 (0.15 = +15%) — null は未計算
+  kelly_fraction: number | null; // 1/4 Kelly賭け率 (0.05 = 5%) — null はEV≤0 or 未計算
 };
 
 export type RaceResult = {
@@ -215,6 +217,8 @@ export async function getStats() {
     hit: boolean | null;
     payout: number;
     hasExhibition: boolean;
+    ev: number | null;     // best_ev (小数: 0.15 = +15%)
+    kelly: number | null;  // kelly_fraction (小数: 0.05 = 5%)
   };
 
   const rows: Row[] = [];
@@ -231,6 +235,8 @@ export async function getStats() {
       hit,
       payout:       res?.payout || 0,
       hasExhibition: !(pred.reason || "").includes("[展示未取得]"),
+      ev:    pred.best_ev    !== undefined ? pred.best_ev    : null,
+      kelly: pred.kelly_fraction !== undefined ? pred.kelly_fraction : null,
     });
   }
 
@@ -270,9 +276,27 @@ export async function getStats() {
   const withEx   = confirmed.filter(r => r.hasExhibition);
   const withoutEx = confirmed.filter(r => !r.hasExhibition);
 
-  // 直近7日分の日別的中率（簡易: 全確定レースをまとめて返す — フロントでグループ不要）
+  // ランク別
   const sRows  = byDecision("buy");
   const aRows  = byDecision("candidate");
+
+  // EV帯別パフォーマンス (best_ev が null でないものだけ対象)
+  const evKnown = confirmed.filter(r => r.ev !== null);
+  const evBands = [
+    { label: ">20%",   f: (r: Row) => (r.ev ?? -1) > 0.20 },
+    { label: "10-20%", f: (r: Row) => (r.ev ?? -1) > 0.10 && (r.ev ?? -1) <= 0.20 },
+    { label: "0-10%",  f: (r: Row) => (r.ev ?? -1) > 0    && (r.ev ?? -1) <= 0.10 },
+    { label: "<0%",    f: (r: Row) => r.ev !== null && (r.ev ?? 0) <= 0 },
+  ].map(b => ({ label: b.label, ...tierStat(evKnown.filter(b.f)) }));
+
+  // Kelly 平均 (buy + candidate で EV>0 のもの)
+  const kellyBetRows = betRows.filter(r => r.kelly !== null && r.kelly > 0);
+  const avgKellyPct = kellyBetRows.length > 0
+    ? (kellyBetRows.reduce((s, r) => s + (r.kelly ?? 0), 0) / kellyBetRows.length * 100).toFixed(1)
+    : null;
+
+  // EV>0 レースの的中率 (投資判断の根拠)
+  const evPositiveRows = confirmed.filter(r => r.ev !== null && (r.ev ?? 0) > 0);
 
   return {
     total, hitCount,
@@ -297,6 +321,19 @@ export async function getStats() {
     withoutExHit:   withoutEx.filter(r => r.hit).length,
     withoutExRate:  tierStat(withoutEx).rate,
     withoutExRoi:   tierStat(withoutEx).roi,
+    // EV帯別
+    evBands,
+    evKnownCount: evKnown.length,
+    // Kelly
+    avgKellyPct,
+    kellyBetCount: kellyBetRows.length,
+    // EV>0 的中率
+    evPositiveCount: evPositiveRows.length,
+    evPositiveHit:   evPositiveRows.filter(r => r.hit).length,
+    evPositiveRate:  evPositiveRows.length > 0
+      ? ((evPositiveRows.filter(r => r.hit).length / evPositiveRows.length) * 100).toFixed(1)
+      : "0.0",
+    evPositiveRoi:   tierStat(evPositiveRows).roi,
   };
 }
 
@@ -539,6 +576,8 @@ export type ScheduleRow = {
   reason: string | null;
   gap: number | null;
   has_exhibition: boolean;
+  best_ev: number | null;
+  kelly_fraction: number | null;
   // result
   trifecta_result: string | null;
   payout: number | null;
@@ -570,7 +609,7 @@ export async function getScheduleData(date: string): Promise<{
     .from("races")
     .select(`
       id, stadium, race_no, close_time, status,
-      predictions(pick, confidence, decision, reason, is_hit, gap),
+      predictions(pick, confidence, decision, reason, is_hit, gap, best_ev, kelly_fraction),
       results(trifecta_result, payout, popularity, prediction_hit)
     `)
     .eq("race_date", date)
@@ -603,6 +642,8 @@ export async function getScheduleData(date: string): Promise<{
       reason:          reasonText,
       gap,
       has_exhibition:  hasExhibitionData(reasonText),
+      best_ev:         pred?.best_ev         ?? null,
+      kelly_fraction:  pred?.kelly_fraction  ?? null,
       trifecta_result: result?.trifecta_result ?? null,
       payout:          result?.payout          ?? null,
       popularity:      result?.popularity      ?? null,

@@ -36,13 +36,18 @@ export default async function HomePage() {
     !r.predictions.reason.includes("[展示未取得]") &&
     !r.predictions.reason.includes("朝スキャン暫定");
 
-  // 展示確認済みレースを confidence 降順でランキング
-  const rankedRaces = races
-    .filter(r => r.predictions != null && hasExhibition(r))
+  // confidence 降順でソート
+  const sorted = races
+    .filter(r => r.predictions != null)
     .sort((a, b) => (b.predictions?.confidence ?? 0) - (a.predictions?.confidence ?? 0));
 
-  // 展示未取得（朝スキャン暫定）
-  const pendingRaces = races.filter(r => r.predictions != null && !hasExhibition(r));
+  // 投票候補（展示確認済みのみ）
+  const buyRaces       = sorted.filter(r => r.predictions?.decision === "buy"       && hasExhibition(r));
+  const candidateRaces = sorted.filter(r => r.predictions?.decision === "candidate" && hasExhibition(r));
+  const skipRaces      = sorted.filter(r => r.predictions?.decision === "skip"      && hasExhibition(r));
+  const pendingRaces   = sorted.filter(r => !hasExhibition(r));
+
+  const hasBets = buyRaces.length > 0 || candidateRaces.length > 0;
 
   // 転がし判定バナーの色
   const bannerStyle =
@@ -51,20 +56,23 @@ export default async function HomePage() {
       : plan.judgment === "conditional"
       ? "bg-amber-50 border-amber-400"
       : "bg-gray-50 border-gray-300";
-  const bannerIcon =
-    plan.judgment === "go" ? "✅" : plan.judgment === "conditional" ? "⚠️" : "🚫";
-  const bannerLabel =
-    plan.judgment === "go" ? "挑戦可能" : plan.judgment === "conditional" ? "条件付き" : "見送り";
+  const bannerIcon  = plan.judgment === "go" ? "✅" : plan.judgment === "conditional" ? "⚠️" : "🚫";
+  const bannerLabel = plan.judgment === "go" ? "挑戦可能" : plan.judgment === "conditional" ? "条件付き" : "見送り";
 
   return (
     <main className="max-w-lg mx-auto px-4 py-6">
-      <h1 className="text-xl font-bold mb-1">今日の三連複予想</h1>
-      <p className="text-xs text-gray-400 mb-4">
-        {today}
-        {rankedRaces.length > 0 && (
-          <span> · 展示確認済み {rankedRaces.length}件を信頼度順</span>
-        )}
-      </p>
+      {/* ── ヘッダー ─────────────────────────────────────────── */}
+      <div className="mb-4">
+        <h1 className="text-xl font-bold">今日の投票リスト</h1>
+        <p className="text-xs text-gray-400 mt-0.5">
+          {today}　　三連複1点買い
+          {hasBets && (
+            <span className="ml-2 font-semibold text-gray-600">
+              BUY {buyRaces.length}件 ／ 検討 {candidateRaces.length}件
+            </span>
+          )}
+        </p>
+      </div>
 
       {/* ── 転がし判定バナー ─────────────────────────────────── */}
       <a href="/roll-plan" className="block mb-5">
@@ -72,11 +80,10 @@ export default async function HomePage() {
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               <span className="text-lg">{bannerIcon}</span>
-              <span className="font-bold text-sm">4回転がし判定：{bannerLabel}</span>
+              <span className="font-bold text-sm">4回転がし：{bannerLabel}</span>
             </div>
             <span className="text-xs text-gray-400">詳細 →</span>
           </div>
-
           {plan.bestRoute ? (
             <div className="space-y-1">
               <div className="flex items-center gap-1 flex-wrap text-xs">
@@ -120,39 +127,76 @@ export default async function HomePage() {
         </div>
       </a>
 
-      {/* ── 予想ランキング（展示確認済み） ──────────────────────── */}
-      {rankedRaces.length > 0 ? (
-        <section className="mb-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">
-            予想ランキング <span className="text-xs font-normal text-gray-400">（信頼度順 · 展示確認済み）</span>
-          </h2>
-          {rankedRaces.map((r, i) => (
-            <RaceCard key={r.id} race={r} rank={i + 1} />
-          ))}
-        </section>
-      ) : pendingRaces.length > 0 ? (
-        <div className="text-center py-10 text-gray-400">
-          <p className="text-base font-semibold mb-1 text-amber-500">展示情報を取得中…</p>
-          <p className="text-sm">{pendingRaces.length}件の候補が直前スキャン待ちです</p>
-        </div>
-      ) : (
-        <div className="text-center py-10 text-gray-400">
+      {/* ── データなし ──────────────────────────────────────── */}
+      {!hasBets && pendingRaces.length === 0 && skipRaces.length === 0 && (
+        <div className="text-center py-12 text-gray-400">
           <p className="text-base font-semibold mb-2">本日のデータがまだありません</p>
           <p className="text-sm">朝6時以降にスキャンが始まります</p>
         </div>
       )}
 
-      {/* ── 展示待ち（補足表示） ─────────────────────────────── */}
-      {pendingRaces.length > 0 && rankedRaces.length > 0 && (
+      {/* ── 🎯 投票確定（BUY） ───────────────────────────────── */}
+      {buyRaces.length > 0 && (
         <section className="mb-6">
-          <p className="text-xs text-amber-500 text-center">
-            △ 展示待ち {pendingRaces.length}件 — 直前スキャン後にランキングに追加されます
-          </p>
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-base">🎯</span>
+            <h2 className="text-sm font-bold text-red-600">
+              投票確定 <span className="font-normal text-gray-400">（{buyRaces.length}件）</span>
+            </h2>
+          </div>
+          {buyRaces.map((r, i) => (
+            <RaceCard key={r.id} race={r} rank={i + 1} />
+          ))}
         </section>
       )}
 
+      {/* ── 📌 投票検討（CANDIDATE） ─────────────────────────── */}
+      {candidateRaces.length > 0 && (
+        <section className="mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-base">📌</span>
+            <h2 className="text-sm font-bold text-orange-500">
+              投票検討 <span className="font-normal text-gray-400">（{candidateRaces.length}件）</span>
+            </h2>
+          </div>
+          {candidateRaces.map((r, i) => (
+            <RaceCard key={r.id} race={r} rank={buyRaces.length + i + 1} />
+          ))}
+        </section>
+      )}
+
+      {/* ── 展示待ち ─────────────────────────────────────────── */}
+      {pendingRaces.length > 0 && (
+        <section className="mb-6">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-base">⏳</span>
+            <h2 className="text-sm font-semibold text-amber-500">
+              展示待ち <span className="font-normal text-gray-400">（{pendingRaces.length}件 · 直前スキャン後に更新）</span>
+            </h2>
+          </div>
+          {pendingRaces.map((r) => (
+            <RaceCard key={r.id} race={r} />
+          ))}
+        </section>
+      )}
+
+      {/* ── スキップ（折りたたみ） ──────────────────────────── */}
+      {skipRaces.length > 0 && (
+        <details className="mb-6">
+          <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600 list-none flex items-center gap-1">
+            <span>▶</span>
+            <span>見送り {skipRaces.length}件を表示</span>
+          </summary>
+          <div className="mt-3 opacity-60">
+            {skipRaces.map((r) => (
+              <RaceCard key={r.id} race={r} />
+            ))}
+          </div>
+        </details>
+      )}
+
       {/* ── ナビゲーション ────────────────────────────────────── */}
-      <div className="mt-8 grid grid-cols-3 gap-2 text-center text-xs text-gray-500">
+      <div className="mt-6 grid grid-cols-3 gap-2 text-center text-xs text-gray-500">
         <a href="/schedule"  className="border rounded-lg py-2 hover:bg-gray-50 hover:text-gray-700">📋 スケジュール</a>
         <a href="/roll-plan" className="border rounded-lg py-2 hover:bg-gray-50 hover:text-gray-700">🔄 転がし計画</a>
         <a href="/stats"     className="border rounded-lg py-2 hover:bg-gray-50 hover:text-gray-700">📊 長期統計</a>

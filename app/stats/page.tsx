@@ -144,6 +144,125 @@ export default async function StatsPage() {
               </div>
             </div>
           </Section>
+
+          {/* ── EV帯別パフォーマンス ── */}
+          {stats.evKnownCount > 0 && (
+            <Section title="EV帯別パフォーマンス">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-gray-400 border-b">
+                      <th className="text-left py-1">期待値帯</th>
+                      <th className="text-right py-1">件数</th>
+                      <th className="text-right py-1">的中</th>
+                      <th className="text-right py-1">的中率</th>
+                      <th className="text-right py-1">回収率</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.evBands.map(b => (
+                      <tr key={b.label} className="border-b last:border-0">
+                        <td className="py-1.5 font-mono text-xs font-bold text-gray-700">{b.label}</td>
+                        <td className="py-1.5 text-right">{b.count}</td>
+                        <td className="py-1.5 text-right">{b.hit}</td>
+                        <td className={`py-1.5 text-right font-bold ${parseFloat(b.rate) >= 30 ? "text-green-600" : "text-gray-700"}`}>
+                          {b.count > 0 ? `${b.rate}%` : "-"}
+                        </td>
+                        <td className={`py-1.5 text-right font-bold ${parseFloat(b.roi) >= 100 ? "text-green-600" : parseFloat(b.roi) > 0 ? "text-orange-500" : "text-gray-400"}`}>
+                          {b.count > 0 ? `${b.roi}%` : "-"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {stats.avgKellyPct && (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-xs text-gray-500">平均Kelly率</span>
+                  <span className="text-sm font-bold text-purple-700">{stats.avgKellyPct}%</span>
+                  <span className="text-xs text-gray-400">({stats.kellyBetCount}件)</span>
+                </div>
+              )}
+              <p className="text-xs text-gray-400 mt-1">
+                ※ EV（期待値）がプラスの組み合わせを優先投票 → 回収率の向上を検証します
+              </p>
+            </Section>
+          )}
+
+          {/* ── 投資準備チェック ── */}
+          <Section title="投資準備チェック">
+            {(() => {
+              const sRateNum     = parseFloat(stats.sRate);
+              const sRoiNum      = parseFloat(stats.sRoi);
+              const evPosRateNum = parseFloat(stats.evPositiveRate);
+              const evPosRoiNum  = parseFloat(stats.evPositiveRoi);
+              const items = [
+                {
+                  ok: stats.sCount >= 30,
+                  label: "BUYデータ 30件以上",
+                  value: `${stats.sCount} 件`,
+                  note: "統計的信頼性のための最低サンプル数",
+                },
+                {
+                  ok: sRateNum >= 35,
+                  label: "BUY 的中率 ≥ 35%",
+                  value: `${stats.sRate}%`,
+                  note: "三連複の回収率損益分岐の目安",
+                },
+                {
+                  ok: sRoiNum >= 100,
+                  label: "BUY 回収率 ≥ 100%",
+                  value: `${stats.sRoi}%`,
+                  note: "投資対象として最低条件",
+                },
+                {
+                  ok: stats.evPositiveCount >= 10 && evPosRateNum >= 30,
+                  label: "EV>0% 的中率 ≥ 30%",
+                  value: stats.evPositiveCount > 0 ? `${stats.evPositiveRate}% (${stats.evPositiveCount}件)` : "データなし",
+                  note: "EV計算精度の検証",
+                },
+                {
+                  ok: evPosRoiNum >= 100 && stats.evPositiveCount >= 5,
+                  label: "EV>0% 回収率 ≥ 100%",
+                  value: stats.evPositiveCount > 0 ? `${stats.evPositiveRoi}%` : "データなし",
+                  note: "Kelly基準の有効性検証",
+                },
+              ];
+              const passCount = items.filter(i => i.ok).length;
+              return (
+                <>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className={`text-2xl font-black ${passCount === items.length ? "text-green-600" : passCount >= 3 ? "text-orange-500" : "text-gray-400"}`}>
+                      {passCount}/{items.length}
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      {passCount === items.length
+                        ? "🟢 投資開始OK"
+                        : passCount >= 3
+                        ? "🟡 もう少しでOK"
+                        : "🔴 データ収集中"}
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    {items.map((item, i) => (
+                      <div key={i} className="flex items-start gap-2 text-sm">
+                        <span className={`shrink-0 font-bold ${item.ok ? "text-green-500" : "text-gray-300"}`}>
+                          {item.ok ? "✓" : "○"}
+                        </span>
+                        <div className="flex-1">
+                          <span className={item.ok ? "text-gray-800" : "text-gray-400"}>{item.label}</span>
+                          <span className={`ml-2 font-bold tabular-nums ${item.ok ? "text-green-600" : "text-orange-500"}`}>
+                            {item.value}
+                          </span>
+                          <div className="text-xs text-gray-400">{item.note}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              );
+            })()}
+          </Section>
         </>
       )}
 

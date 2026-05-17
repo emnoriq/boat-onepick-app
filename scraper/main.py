@@ -460,7 +460,8 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
             "decision":   pred["decision"],
             "reason":     "\n".join(reason_lines),
             "gap":        pred["gap"],
-            "best_ev":    pred["best_ev"],  # DB にカラムがなければ db.py が自動リトライ
+            "best_ev":        pred["best_ev"],
+            "kelly_fraction": pred.get("kelly_fraction"),
         })
         race_ids_to_finalize.append(race_id)
 

@@ -372,6 +372,35 @@ def gap_between_3rd_4th(scores: list[EntryScore]) -> float:
     return scores[2].total - scores[3].total
 
 
+def calculate_kelly(ev: float, payout: int, fraction: float = 0.25) -> float:
+    """
+    Kelly基準の最適賭け率を計算する（1/4 Kelly デフォルト）。
+
+    Full Kelly = EV / (net_odds) = EV / (payout/100 - 1)
+    1/4 Kelly  = Full Kelly × 0.25  ← 実用上の安全マージン
+
+    Args:
+        ev:       期待値 (例: 0.20 = +20%)
+        payout:   払戻額 (例: 300 = ¥300/¥100賭け)
+        fraction: Kelly分数 (デフォルト 0.25 = 1/4 Kelly)
+
+    Returns:
+        推奨賭け率 (0.0〜1.0) = バンクロールの何%
+        EV ≤ 0 または payout ≤ 100 の場合は 0.0 を返す。
+
+    使用例:
+        kelly = calculate_kelly(0.20, 300)  # → 0.025 (2.5%)
+        推奨額 = bankroll × kelly           # ¥10,000 × 0.025 = ¥250
+    """
+    if ev <= 0 or payout <= 100:
+        return 0.0
+    b = payout / 100.0 - 1.0  # net odds (¥300 → 2.0)
+    if b <= 0:
+        return 0.0
+    full_kelly = min(1.0, max(0.0, ev / b))
+    return round(full_kelly * fraction, 4)
+
+
 def scores_to_combo_probs(
     scores: list[EntryScore],
     temperature: float = 12.0,
@@ -564,6 +593,7 @@ def decide(
     # ── EV モード（全オッズが提供された場合） ────────────────────────────────
     best_ev: Optional[float] = None
     ev_pick: Optional[str]   = None
+    kelly_fraction: Optional[float] = None
 
     if all_odds and not forced_skip:
         combo_probs = scores_to_combo_probs(scores)
@@ -610,6 +640,10 @@ def decide(
             ev_summary = " / ".join(f"{c}:EV{v:+.2f}" for c, v in top3_ev)
             reasons.append(f"EV上位3: {ev_summary}")
 
+            # Kelly基準: EV > 0 のときのみ計算
+            if best_ev is not None and best_ev > 0 and ev_pick and ev_pick in all_odds:
+                kelly_fraction = calculate_kelly(best_ev, all_odds[ev_pick])
+
     else:
         # ── スコアモード（朝スキャン・オッズ未取得時） ────────────────────────
         # 払戻フィルター（後方互換）
@@ -633,6 +667,7 @@ def decide(
         "reason":     reasons,
         "scores":     [s.to_dict() for s in scores],
         "gap":        round(gap, 2),
-        "best_ev":    round(best_ev, 4) if best_ev is not None else None,
-        "ev_pick":    ev_pick,
+        "best_ev":       round(best_ev, 4) if best_ev is not None else None,
+        "ev_pick":       ev_pick,
+        "kelly_fraction": kelly_fraction,  # 推奨賭け率 (1/4 Kelly)
     }

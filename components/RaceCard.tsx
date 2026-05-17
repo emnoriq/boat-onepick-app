@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { RaceWithPrediction } from "@/lib/supabase";
-import { formatCloseTime, rankColor, hitLabel } from "@/lib/format";
+import { formatCloseTime, rankColor, hitLabel, buildBoatraceUrl } from "@/lib/format";
 import PredictionBadge from "./PredictionBadge";
 
 type Props = {
@@ -15,10 +15,13 @@ export default function RaceCard({ race, rank }: Props) {
   if (!prediction) return null;
 
   const confColor = rankColor(prediction.confidence);
+  const isBet = prediction.decision === "buy" || prediction.decision === "candidate";
+  const boatraceUrl = buildBoatraceUrl(race.stadium, race.race_date, race.race_no);
 
   return (
-    <Link href={`/races/${race.id}`}>
-      <div className="border rounded-xl p-4 mb-3 hover:shadow-md transition-shadow bg-white cursor-pointer">
+    <div className="border rounded-xl mb-3 bg-white hover:shadow-md transition-shadow overflow-hidden">
+      {/* カード本体 → 詳細ページへ */}
+      <Link href={`/races/${race.id}`} className="block p-4 cursor-pointer">
 
         {/* ヘッダー行 */}
         <div className="flex items-center gap-2 mb-2">
@@ -38,7 +41,7 @@ export default function RaceCard({ race, rank }: Props) {
           <PredictionBadge decision={prediction.decision} />
         </div>
 
-        {/* メイン：pick + confidence + EV */}
+        {/* メイン：pick + confidence */}
         <div className="flex items-center gap-4">
           <div className="flex-1">
             <div className="text-lg font-bold tracking-widest">
@@ -50,23 +53,39 @@ export default function RaceCard({ race, rank }: Props) {
                 <span className="text-gray-400 font-normal ml-2">gap {Number(prediction.gap).toFixed(1)}</span>
               )}
             </div>
-            {/* EV バッジ */}
-            {(() => {
-              const evMatch = prediction.reason?.match(/EV=([+-][\d.]+)/);
-              const ev = evMatch ? parseFloat(evMatch[1]) : null;
-              if (ev === null) return null;
-              return (
-                <div className={`inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded text-xs font-bold ${
-                  ev > 0.15 ? "bg-green-100 text-green-700" :
-                  ev > 0    ? "bg-emerald-50 text-emerald-600" :
-                              "bg-gray-100 text-gray-400"
-                }`}>
-                  EV {ev >= 0 ? "+" : ""}{(ev * 100).toFixed(0)}%
-                  {ev > 0 && <span className="font-normal">← 期待値プラス</span>}
-                </div>
-              );
-            })()}
+
+            {/* EV バッジ + Kelly バッジ */}
+            <div className="flex flex-wrap gap-1 mt-1">
+              {(() => {
+                const ev = prediction.best_ev
+                  ?? (() => {
+                    const m = prediction.reason?.match(/EV=([+-]?[\d.]+)/);
+                    return m ? parseFloat(m[1]) : null;
+                  })();
+                if (ev === null) return null;
+                return (
+                  <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold ${
+                    ev > 0.15 ? "bg-green-100 text-green-700" :
+                    ev > 0    ? "bg-emerald-50 text-emerald-600" :
+                                "bg-gray-100 text-gray-400"
+                  }`}>
+                    EV {ev >= 0 ? "+" : ""}{(ev * 100).toFixed(0)}%
+                    {ev > 0 && <span className="font-normal">期待値プラス</span>}
+                  </div>
+                );
+              })()}
+              {(() => {
+                const k = prediction.kelly_fraction;
+                if (!k || k <= 0) return null;
+                return (
+                  <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-purple-50 text-purple-700">
+                    Kelly {(k * 100).toFixed(1)}%
+                  </div>
+                );
+              })()}
+            </div>
           </div>
+
           {result && (
             <span className={`text-sm font-semibold shrink-0 ${
               result.prediction_hit ? "text-green-600" : "text-gray-400"
@@ -87,7 +106,23 @@ export default function RaceCard({ race, rank }: Props) {
             ))}
           </ul>
         )}
-      </div>
-    </Link>
+      </Link>
+
+      {/* 投票ボタン（BUY / CANDIDATE のみ） */}
+      {isBet && (
+        <a
+          href={boatraceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`block text-center text-sm font-bold py-2 border-t transition-colors ${
+            prediction.decision === "buy"
+              ? "bg-red-50 text-red-600 hover:bg-red-100 border-red-100"
+              : "bg-orange-50 text-orange-600 hover:bg-orange-100 border-orange-100"
+          }`}
+        >
+          boatrace.jp で出走表を確認 →
+        </a>
+      )}
+    </div>
   );
 }
