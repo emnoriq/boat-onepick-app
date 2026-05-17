@@ -1,29 +1,17 @@
-import { getTodayPredictions, getScheduleData } from "@/lib/supabase";
-import { buildRollPlan } from "@/lib/rollPlan";
+import { getTodayPredictions } from "@/lib/supabase";
 import RaceCard from "@/components/RaceCard";
 
 export const dynamic = "force-dynamic";
 
 function todayJST(): string {
   return new Date().toLocaleDateString("ja-JP", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric", month: "2-digit", day: "2-digit",
+    timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit",
   }).replace(/\//g, "-");
-}
-
-function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("ja-JP", {
-    timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit", hour12: false,
-  });
 }
 
 export default async function HomePage() {
   const today = todayJST();
-  const [races, { rows }] = await Promise.all([
-    getTodayPredictions(today),
-    getScheduleData(today),
-  ]);
-  const plan = buildRollPlan(rows);
+  const races = await getTodayPredictions(today);
 
   const hasEx = (r: typeof races[number]) =>
     r.predictions?.reason != null &&
@@ -69,57 +57,6 @@ export default async function HomePage() {
           )}
         </div>
       </div>
-
-      {/* ── 転がし判定バナー ─────────────────────────────────────── */}
-      <a href="/roll-plan" className="block mb-5 group">
-        <div className={`rounded-2xl p-4 border-l-4 transition-shadow hover:shadow-md ${
-          plan.judgment === "go"          ? "bg-white border-l-emerald-500" :
-          plan.judgment === "conditional" ? "bg-white border-l-amber-400"   :
-                                            "bg-white border-l-gray-200"
-        }`}>
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <span className="text-base">
-                {plan.judgment === "go" ? "✅" : plan.judgment === "conditional" ? "⚠️" : "🚫"}
-              </span>
-              <span className="font-bold text-sm text-gray-800">
-                4回転がし：{
-                  plan.judgment === "go" ? "挑戦可能" :
-                  plan.judgment === "conditional" ? "条件付き" : "見送り"
-                }
-              </span>
-            </div>
-            <span className="text-xs text-gray-400 group-hover:text-gray-600">詳細 →</span>
-          </div>
-          {plan.bestRoute ? (
-            <div className="flex flex-wrap items-center gap-1 text-xs">
-              <span className="font-bold text-gray-700">¥1,000</span>
-              {plan.bestRoute.steps.map((step, i) => {
-                const isNext = step.status === "scheduled" &&
-                  plan.bestRoute!.steps.slice(0, i).every(s => s.status === "finished");
-                return (
-                  <span key={step.race_id} className="flex items-center gap-1">
-                    <span className="text-gray-200">›</span>
-                    <span className={`px-2 py-0.5 rounded-lg font-medium ${
-                      step.prediction_hit === true  ? "bg-emerald-100 text-emerald-700" :
-                      step.prediction_hit === false ? "bg-red-100 text-red-500 line-through" :
-                      isNext                        ? "bg-sky-100 text-sky-700 font-bold" :
-                                                      "bg-gray-100 text-gray-500"
-                    }`}>
-                      {step.stadium} {step.race_no}R {fmtTime(step.close_time)}
-                      {step.prediction_hit === true  && " ✅"}
-                      {step.prediction_hit === false && " ❌"}
-                      {isNext && " ◀"}
-                    </span>
-                  </span>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-sm text-gray-400">本日は4回転がしルートが見つかりません</p>
-          )}
-        </div>
-      </a>
 
       {/* ── データなし ───────────────────────────────────────────── */}
       {!hasBets && pending.length === 0 && skipRaces.length === 0 && (
@@ -186,12 +123,11 @@ export default async function HomePage() {
       )}
 
       {/* ── ボトムナビ ──────────────────────────────────────────── */}
-      <div className="border-t border-gray-100 pt-5 mt-2 grid grid-cols-4 gap-2 text-center">
+      <div className="border-t border-gray-100 pt-5 mt-2 grid grid-cols-3 gap-2 text-center">
         {[
-          { href: "/schedule",  icon: "📋", label: "スケジュール" },
-          { href: "/roll-plan", icon: "🔄", label: "転がし計画" },
-          { href: "/stats",     icon: "📊", label: "統計" },
-          { href: "/debug",     icon: "🔍", label: "デバッグ" },
+          { href: "/schedule", icon: "📋", label: "スケジュール" },
+          { href: "/stats",    icon: "📊", label: "統計" },
+          { href: "/debug",    icon: "🔍", label: "デバッグ" },
         ].map(nav => (
           <a
             key={nav.href}

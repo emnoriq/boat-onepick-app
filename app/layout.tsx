@@ -17,9 +17,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <span className="font-black text-slate-800 text-base tracking-tight">三連複1点</span>
             </a>
             <div className="flex items-center gap-1 text-xs">
-              <a href="/schedule"  className="px-3 py-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors">スケジュール</a>
-              <a href="/roll-plan" className="px-3 py-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors">転がし</a>
-              <a href="/stats"     className="px-3 py-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors">統計</a>
+              <a href="/schedule" className="px-3 py-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors">スケジュール</a>
+              <a href="/stats"    className="px-3 py-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors">統計</a>
             </div>
           </div>
         </nav>
