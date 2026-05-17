@@ -9,16 +9,17 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ja">
-      <body className="bg-gray-50 min-h-screen">
-        <nav className="bg-white border-b px-4 py-3">
-          <div className="max-w-6xl mx-auto flex items-center justify-between">
-            <a href="/" className="font-bold text-base">三連複1点</a>
-            <div className="flex items-center gap-4 text-sm">
-              <a href="/ops"       className="text-gray-500 hover:text-gray-800">運用</a>
-              <a href="/schedule"  className="text-gray-500 hover:text-gray-800">スケジュール</a>
-              <a href="/roll-plan" className="text-gray-500 hover:text-gray-800">転がし計画</a>
-              <a href="/stats"     className="text-gray-500 hover:text-gray-800">統計</a>
-              <a href="/debug"     className="text-gray-400 hover:text-gray-600">debug</a>
+      <body className="bg-slate-50 min-h-screen">
+        <nav className="bg-white border-b border-gray-100 px-4 py-3 sticky top-0 z-10 shadow-sm">
+          <div className="max-w-lg mx-auto flex items-center justify-between">
+            <a href="/" className="flex items-center gap-2">
+              <span className="text-lg">⛵</span>
+              <span className="font-black text-slate-800 text-base tracking-tight">三連複1点</span>
+            </a>
+            <div className="flex items-center gap-1 text-xs">
+              <a href="/schedule"  className="px-3 py-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors">スケジュール</a>
+              <a href="/roll-plan" className="px-3 py-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors">転がし</a>
+              <a href="/stats"     className="px-3 py-1.5 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors">統計</a>
             </div>
           </div>
         </nav>
