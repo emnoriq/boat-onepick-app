@@ -141,6 +141,52 @@ def test_gap_weight():
     assert "gap=" in str(pred["reason"]), "gapがreasonに含まれていない"
     print(f"  ✓ gap_in_reason: gap={pred['gap']:.1f}")
 
+def test_ev_calculation():
+    """EV計算: 高確率低配当はEVマイナス、中確率高配当はEVプラス。pickがEV最大に変わるか"""
+    entries = [
+        EntryData(lane=1, racer_name="強", racer_class="A1", motor_rate=60, avg_st=0.10,
+                  exhibition_time=6.55, exhibition_st=0.08, approach_lane=1, tilt=1.0),
+        EntryData(lane=2, racer_name="中1", racer_class="A2", motor_rate=48, avg_st=0.13,
+                  exhibition_time=6.70, exhibition_st=0.11, approach_lane=2, tilt=0.5),
+        EntryData(lane=3, racer_name="中2", racer_class="A2", motor_rate=45, avg_st=0.14,
+                  exhibition_time=6.75, exhibition_st=0.12, approach_lane=3, tilt=0.5),
+        EntryData(lane=4, racer_name="弱1", racer_class="B1", motor_rate=30, avg_st=0.17,
+                  exhibition_time=7.00, exhibition_st=0.16, approach_lane=4, tilt=0.0),
+        EntryData(lane=5, racer_name="中3", racer_class="A2", motor_rate=50, avg_st=0.13,
+                  exhibition_time=6.72, exhibition_st=0.11, approach_lane=5, tilt=0.5),
+        EntryData(lane=6, racer_name="弱2", racer_class="B2", motor_rate=25, avg_st=0.19,
+                  exhibition_time=7.05, exhibition_st=0.17, approach_lane=6, tilt=0.0),
+    ]
+    cond = RaceCondition()
+    scores = score_entries(entries, cond)
+
+    from scoring import scores_to_combo_probs, calculate_combo_ev
+    probs = scores_to_combo_probs(scores)
+
+    # 確率合計 ≈ 1.0
+    assert abs(sum(probs.values()) - 1.0) < 1e-9, "確率の合計が1でない"
+    # 1-2-3が最高確率
+    assert probs["1-2-3"] == max(probs.values()), "1-2-3が最高確率でない"
+
+    # EV: 1-2-3を人気(低配当¥280)、1-2-5を穴(高配当¥420)
+    odds = {"1-2-3": 280, "1-2-5": 420, "1-3-5": 580}
+    ev = calculate_combo_ev(probs, odds)
+
+    # 1-2-3: 高確率・低配当 → EVマイナス
+    assert ev["1-2-3"] < 0, f"1-2-3のEVがプラス: {ev['1-2-3']:.4f}"
+    # 1-2-5: 次点確率・割安配当 → EVプラス
+    assert ev["1-2-5"] > 0, f"1-2-5のEVがマイナス: {ev['1-2-5']:.4f}"
+
+    # decide() EVモード: pickが1-2-5に変わるはず
+    pred = decide(scores, cond, all_odds=odds)
+    assert pred["pick"] == "1-2-5", f"EV最大pickが期待値と違う: {pred['pick']}"
+    assert pred["best_ev"] is not None and pred["best_ev"] > 0, \
+        f"best_evがプラスでない: {pred['best_ev']}"
+
+    print(f"  ✓ ev: 1-2-3={ev['1-2-3']:+.4f}(人気低配当) 1-2-5={ev['1-2-5']:+.4f}(穴高配当)")
+    print(f"  ✓ ev_pick: {pred['pick']} EV={pred['best_ev']:+.4f} → {pred['decision']}")
+
+
 if __name__ == "__main__":
     print("=== scoring.py テスト ===")
     tests = [
@@ -149,6 +195,7 @@ if __name__ == "__main__":
         test_lane1_approach_penalty,
         test_payout_filter,
         test_gap_weight,
+        test_ev_calculation,
     ]
     failed = 0
     for t in tests:

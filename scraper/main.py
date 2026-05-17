@@ -387,13 +387,10 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
         lane1_entry  = next((e for e in entries if e.lane == 1), None)
         lane1_approach = lane1_entry.approach_lane if lane1_entry else None
 
-        # 三連複オッズを取得してペイロードフィルタに使用
-        top3_lanes = [str(scores[i].lane) for i in range(min(3, len(scores)))]
-        initial_pick = "-".join(sorted(top3_lanes, key=int))
+        # 三連複オッズを全20組み合わせ取得してEV計算に使用
         odds = fetch_trifecta_box_odds(code, race_no, today)
-        pick_payout = get_pick_payout(odds, initial_pick)
-        pred = decide(scores, condition, pick_payout=pick_payout,
-                      lane1_approach=lane1_approach)
+        pred = decide(scores, condition, lane1_approach=lane1_approach,
+                      all_odds=odds if odds else None)
 
         # entries ペイロード (展示情報・チルト込み)
         all_entries_payload.extend([{
@@ -424,7 +421,8 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
             "confidence": pred["confidence"],
             "decision":   pred["decision"],
             "reason":     "\n".join(reason_lines),
-            "gap":        pred["gap"],   # DB に gap カラムがなければ db.py が自動リトライ
+            "gap":        pred["gap"],
+            "best_ev":    pred["best_ev"],  # DB にカラムがなければ db.py が自動リトライ
         })
         race_ids_to_finalize.append(race_id)
 
@@ -512,17 +510,14 @@ def pre_race_scan_single(today: date, stadium_name: str, race_no: int) -> None:
     if lane1_approach and lane1_approach >= 3:
         logger.info("⚠️ 1号艇コース%d進入 — インアドバンテージ消失", lane1_approach)
 
-    # 三連複オッズを取得してペイロードフィルタに使用
-    top3_lanes = [str(scores[i].lane) for i in range(min(3, len(scores)))]
-    initial_pick = "-".join(sorted(top3_lanes, key=int))
+    # 三連複オッズを全20組み合わせ取得してEV計算に使用
     odds = fetch_trifecta_box_odds(code, race_no, today)
-    pick_payout = get_pick_payout(odds, initial_pick)
-    if pick_payout is not None:
-        logger.info("三連複オッズ (pick=%s): ¥%d/¥100", initial_pick, pick_payout)
+    if odds:
+        logger.info("三連複オッズ取得: %d組", len(odds))
     else:
-        logger.info("三連複オッズ: 取得できませんでした (pick=%s)", initial_pick)
-    pred = decide(scores, condition, pick_payout=pick_payout,
-                  lane1_approach=lane1_approach)
+        logger.info("三連複オッズ: 取得できませんでした")
+    pred = decide(scores, condition, lane1_approach=lane1_approach,
+                  all_odds=odds if odds else None)
 
     reason_lines = pred["reason"]
     if not ex_ok:
@@ -551,14 +546,16 @@ def pre_race_scan_single(today: date, stadium_name: str, race_no: int) -> None:
         "confidence": pred["confidence"],
         "decision":   pred["decision"],
         "reason":     "\n".join(reason_lines),
-        "gap":        pred["gap"],   # DB に gap カラムがなければ db.py が自動リトライ
+        "gap":        pred["gap"],
+        "best_ev":    pred["best_ev"],  # DB にカラムがなければ db.py が自動リトライ
     })
     mark_race_final(db, race_id)
 
     logger.info("=== 最終判定 ===")
     logger.info("pick: %s / confidence: %.1f / decision: %s / is_watch: %s",
                 pred["pick"], pred["confidence"], pred["decision"], pred.get("is_watch"))
-    logger.info("gap(3位-4位): %.1f点", pred["gap"])
+    logger.info("gap(3位-4位): %.1f点 / best_ev: %s",
+                pred["gap"], f"{pred['best_ev']:+.4f}" if pred.get("best_ev") is not None else "N/A")
     for r in pred["reason"]:
         logger.info("  reason: %s", r)
     logger.info("スコアTop3:")

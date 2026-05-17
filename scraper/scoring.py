@@ -28,9 +28,14 @@
       進入コースを実コース位置ベースに刷新 (最大8点)
       信頼度のgap重みを強化 (/200→/150)
       1号艇コース3以降進入の信頼度ペナルティを追加
+  v6: 期待値(EV)計算を追加
+      全20組み合わせのEVを算出し最大EV組み合わせを推薦
+      「強い艇を当てる」→「市場が過小評価する組み合わせを見つける」に転換
 """
 
+import math
 from dataclasses import dataclass
+from itertools import combinations as _combinations
 from typing import Optional
 
 
@@ -296,11 +301,70 @@ def gap_between_3rd_4th(scores: list[EntryScore]) -> float:
     return scores[2].total - scores[3].total
 
 
+def scores_to_combo_probs(
+    scores: list[EntryScore],
+    temperature: float = 12.0,
+) -> dict[str, float]:
+    """
+    全三連複組み合わせ（最大20通り）の推定的中確率を返す。
+
+    Softmax変換でボートのスコアを相対強度に変換し、
+    3艇組み合わせの確率を積で近似（正規化済み）。
+
+    Args:
+        temperature: 大きいほど確率が均等に分散する（デフォルト12）
+                     小さくすると上位艇への集中度が増す
+    Returns:
+        {"1-2-3": 0.312, "1-2-4": 0.087, ...}  合計=1.0
+    """
+    exps = {s.lane: math.exp(s.total / temperature) for s in scores}
+    total_exp = sum(exps.values())
+    strength = {lane: v / total_exp for lane, v in exps.items()}
+
+    lanes = sorted(s.lane for s in scores)
+    combo_probs: dict[str, float] = {}
+    for combo in _combinations(lanes, 3):
+        key = "-".join(str(l) for l in combo)
+        combo_probs[key] = strength[combo[0]] * strength[combo[1]] * strength[combo[2]]
+
+    total_p = sum(combo_probs.values())
+    return {k: v / total_p for k, v in combo_probs.items()} if total_p > 0 else combo_probs
+
+
+def calculate_combo_ev(
+    combo_probs: dict[str, float],
+    odds: dict[str, int],
+) -> dict[str, float]:
+    """
+    各三連複組み合わせの期待値(EV)を計算する。
+
+    EV = P_model × (payout / 100) - 1.0
+      EV > 0   : 期待値プラス ← 買う価値がある
+      EV = 0   : 損益ゼロ（fair な賭け）
+      EV ≈ -0.25: 控除率のみ（完全ランダム時の期待値）
+
+    高スコア上位艇の組み合わせでも人気が集中すれば低配当になりEVがマイナスになる。
+    逆に「そこそこ強いが過小評価されている」組み合わせはEVがプラスになる。
+
+    Args:
+        combo_probs: scores_to_combo_probs() の出力
+        odds:        fetch_trifecta_box_odds() の出力 (key="1-2-3", value=¥払戻)
+    Returns:
+        {"1-2-3": -0.15, "1-3-5": 0.08, ...}
+    """
+    ev: dict[str, float] = {}
+    for combo, prob in combo_probs.items():
+        if combo in odds:
+            ev[combo] = round(prob * odds[combo] / 100.0 - 1.0, 4)
+    return ev
+
+
 def decide(
     scores: list[EntryScore],
     condition: RaceCondition,
-    pick_payout: Optional[int] = None,
+    pick_payout: Optional[int] = None,      # 後方互換（all_odds がない場合のフィルタ用）
     lane1_approach: Optional[int] = None,
+    all_odds: Optional[dict[str, int]] = None,  # 全20組み合わせのオッズ（EVモード）
 ) -> dict:
     """
     買い / 候補 / ウォッチ / 見送り 判定
@@ -308,47 +372,48 @@ def decide(
     decision は "buy" | "candidate" | "skip" の3値。
     watch は decision="skip" の一部で、reason に "[watch]" マーカーを付与。
 
-    # ===== 閾値（2026-05-10 / 3日間420件バックテスト調整済み） =====
-    # confidence = avg_top3 × (1 + gap/150) × lane1_mul
+    # ===== 判定ロジック =====
     #
-    # バックテスト結果（v5モデル・展示データあり100%）:
-    #   conf≥70: 98件 / 的中率32.7% / 平均払戻¥281 / ROI -8.2% ← 最良
-    #   conf≥67: 185件 / 的中率26.5% / 平均払戻¥303 / ROI -19.8%
-    #   BUY判定: 22件 / 的中率18.2% / 平均払戻¥222 / ROI -59.5%（低閾値の罠）
-    #   SKIP:   354件 / 的中率22.9% / 平均払戻¥397 / ROI -9.2%（SPIPの方が配当高い）
+    # [EVモード] all_odds が提供された場合（pre_race_scan）:
+    #   全20組み合わせのEVを計算し、最大EV組み合わせを推薦する。
+    #   EV = P_model × (payout / 100) - 1.0
+    #   EV > 0.15 かつ confidence ≥ 65 → buy
+    #   EV > 0.00                      → candidate
+    #   EV > -0.05                     → watch
+    #   それ以下                        → skip
     #
-    # 根本課題: 高confidence = 人気組み合わせ = 低配当。
-    # 対策: 閾値引き上げ + ペイロードフィルタ強化（live odds での選別が核心）
+    # [スコアモード] all_odds がない場合（morning_scan 等）:
+    #   従来の confidence + gap ベースの判定
+    #   buy:       confidence ≥ 70 かつ gap ≥ 10
+    #   candidate: confidence ≥ 62 かつ gap ≥ 7
+    #   watch:     confidence ≥ 55 かつ gap ≥ 7
+    #   skip:      それ未満
     #
-    # buy:       confidence ≥ 70 かつ gap ≥ 10  (S ランク) ← 旧67 → 70
-    # candidate: confidence ≥ 62 かつ gap ≥ 7   (A ランク) ← 旧59 → 62
-    # watch:     confidence ≥ 55 かつ gap ≥ 7   (B ランク, decision=skip)
-    # skip:      それ未満                         (C ランク)
-    # ──────────────────────────────────────────────────────────
-    # [1号艇コース補正 v5]
-    #   lane1_approach が指定され、かつ3コース以降に進入している場合:
-    #   → 信頼度に 0.85 掛け（旧: 4位以下と同等の0.90）
-    # ──────────────────────────────────────────────────────────
-    # [払戻フィルター] ← 基準を強化（低配当の罠を回避）
-    #   buy   < ¥500 → candidate に降格  (旧: ¥400。BUY平均¥222→損益分岐 100/0.327=¥306)
-    #   cand  < ¥300 → skip に降格       (旧: ¥250)
-    # ===========================================================
+    # [共通] 1号艇コース補正:
+    #   lane1_approach ≥ 3 → confidence × 0.85
+    #
+    # [後方互換] pick_payout フィルター（all_odds なし時のみ有効）:
+    #   buy  < ¥500 → candidate, candidate < ¥300 → skip
+    # ======================================================
 
     Args:
         scores:         EntryScore リスト（スコア降順）
         condition:      レース条件（風速・波高・進入）
-        pick_payout:    三連複オッズの払戻額(¥/¥100bet)。None=フィルタなし。
+        pick_payout:    三連複オッズの払戻額(¥/¥100bet)。all_odds がない時のフォールバック。
         lane1_approach: 1号艇の実際の進入コース番号。None=不明。
+        all_odds:       全20組み合わせのオッズ dict。提供時は EV モードで動作。
 
     Returns:
         {
-            "pick":       "1-2-4",
+            "pick":       "1-2-4",          # EV最大の組み合わせ（EVモード時）
             "confidence": 65.0,
             "decision":   "buy" | "candidate" | "skip",
             "is_watch":   False,
             "rank":       "S" | "A" | "B" | "C",
             "reason":     [...],
             "gap":        12.5,
+            "best_ev":    0.08,             # EV最大値（EVモード時のみ）
+            "ev_pick":    "1-2-4",          # EV最大の組み合わせ
         }
     """
     gap  = gap_between_3rd_4th(scores)
@@ -425,17 +490,68 @@ def decide(
         else:
             reasons.append(f"上位候補が絞れていない (gap={gap:.1f} / 1号艇{lane1_label}{approach_note})")
 
-    # ── 払戻フィルター ────────────────────────────────────────────────────────
-    if pick_payout is not None and pick_payout > 0:
-        reasons.append(f"三連複オッズ: ¥{pick_payout}/¥100")
-        if decision == "buy" and pick_payout < 500:
-            decision = "candidate"
-            rank = "A"
-            reasons.append(f"⚠️ 払戻¥{pick_payout} < ¥500 → candidate に降格")
-        elif decision == "candidate" and pick_payout < 300:
-            decision = "skip"
-            rank = "C"
-            reasons.append(f"⚠️ 払戻¥{pick_payout} < ¥300 → skip に降格")
+    # ── EV モード（全オッズが提供された場合） ────────────────────────────────
+    best_ev: Optional[float] = None
+    ev_pick: Optional[str]   = None
+
+    if all_odds and not forced_skip:
+        combo_probs = scores_to_combo_probs(scores)
+        ev_map      = calculate_combo_ev(combo_probs, all_odds)
+
+        if ev_map:
+            ev_pick  = max(ev_map, key=lambda k: ev_map[k])
+            best_ev  = ev_map[ev_pick]
+
+            # EVモードでは pick を最大EV組み合わせに差し替え
+            pick = ev_pick
+
+            # EV ベースの判定（confidence もあわせて参照）
+            if best_ev > 0.15 and confidence >= 65:
+                decision = "buy"
+                rank     = "S"
+                reasons.append(
+                    f"EV={best_ev:+.2f} (期待値+{best_ev*100:.0f}%) / conf={round(confidence,1)} "
+                    f"/ gap={gap:.1f} — 市場が過小評価している組み合わせ"
+                )
+            elif best_ev > 0.0:
+                decision = "candidate"
+                rank     = "A"
+                reasons.append(
+                    f"EV={best_ev:+.2f} (期待値プラス) / conf={round(confidence,1)} "
+                    f"/ gap={gap:.1f}"
+                )
+            elif best_ev > -0.05:
+                decision = "skip"
+                rank     = "B"
+                is_watch = True
+                reasons.append(
+                    f"[watch] EV={best_ev:+.2f} / conf={round(confidence,1)} / gap={gap:.1f}"
+                )
+            else:
+                decision = "skip"
+                rank     = "C"
+                reasons.append(
+                    f"EV={best_ev:+.2f} — 全組み合わせで期待値マイナス (gap={gap:.1f})"
+                )
+
+            # EVトップ3を reason に記録（透明性のため）
+            top3_ev = sorted(ev_map.items(), key=lambda x: x[1], reverse=True)[:3]
+            ev_summary = " / ".join(f"{c}:EV{v:+.2f}" for c, v in top3_ev)
+            reasons.append(f"EV上位3: {ev_summary}")
+
+    else:
+        # ── スコアモード（朝スキャン・オッズ未取得時） ────────────────────────
+        # 払戻フィルター（後方互換）
+        if pick_payout is not None and pick_payout > 0:
+            reasons.append(f"三連複オッズ: ¥{pick_payout}/¥100")
+            if decision == "buy" and pick_payout < 500:
+                decision = "candidate"
+                rank = "A"
+                reasons.append(f"⚠️ 払戻¥{pick_payout} < ¥500 → candidate に降格")
+            elif decision == "candidate" and pick_payout < 300:
+                decision = "skip"
+                rank = "C"
+                reasons.append(f"⚠️ 払戻¥{pick_payout} < ¥300 → skip に降格")
 
     return {
         "pick":       pick,
@@ -446,4 +562,6 @@ def decide(
         "reason":     reasons,
         "scores":     [s.to_dict() for s in scores],
         "gap":        round(gap, 2),
+        "best_ev":    round(best_ev, 4) if best_ev is not None else None,
+        "ev_pick":    ev_pick,
     }

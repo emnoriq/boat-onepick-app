@@ -38,7 +38,7 @@ export default function RaceCard({ race, rank }: Props) {
           <PredictionBadge decision={prediction.decision} />
         </div>
 
-        {/* メイン：pick + confidence */}
+        {/* メイン：pick + confidence + EV */}
         <div className="flex items-center gap-4">
           <div className="flex-1">
             <div className="text-lg font-bold tracking-widest">
@@ -50,6 +50,22 @@ export default function RaceCard({ race, rank }: Props) {
                 <span className="text-gray-400 font-normal ml-2">gap {Number(prediction.gap).toFixed(1)}</span>
               )}
             </div>
+            {/* EV バッジ */}
+            {(() => {
+              const evMatch = prediction.reason?.match(/EV=([+-][\d.]+)/);
+              const ev = evMatch ? parseFloat(evMatch[1]) : null;
+              if (ev === null) return null;
+              return (
+                <div className={`inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded text-xs font-bold ${
+                  ev > 0.15 ? "bg-green-100 text-green-700" :
+                  ev > 0    ? "bg-emerald-50 text-emerald-600" :
+                              "bg-gray-100 text-gray-400"
+                }`}>
+                  EV {ev >= 0 ? "+" : ""}{(ev * 100).toFixed(0)}%
+                  {ev > 0 && <span className="font-normal">← 期待値プラス</span>}
+                </div>
+              );
+            })()}
           </div>
           {result && (
             <span className={`text-sm font-semibold shrink-0 ${
