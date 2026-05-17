@@ -8,7 +8,8 @@
     -moz-osx-font-smoothing: grayscale;
   }
   body {
-    @apply bg-slate-50 text-gray-900;
+    background-color: #FFF5F0;
+    color: #2d2d2d;
   }
 }
 
