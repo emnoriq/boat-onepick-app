@@ -1,445 +1,242 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import type { ScheduleRow, ScheduleSummary } from "@/lib/supabase";
 
-type Tab = "time" | "conf" | "bet" | "watch";
-
-// ── 小コンポーネント ──────────────────────────────────────────────────────────
-
-function StatusBadge({ status }: { status: string }) {
-  return status === "scheduled" ? (
-    <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">
-      締切前
-    </span>
-  ) : (
-    <span className="text-xs bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded">
-      締切済
-    </span>
-  );
-}
-
-function DecisionBadge({
-  decision,
-  isWatch,
-}: {
-  decision: string | null;
-  isWatch: boolean;
-}) {
-  if (decision === null)
-    return <span className="text-xs text-gray-300">未評価</span>;
-  if (decision === "buy")
-    return (
-      <span className="text-xs bg-red-100 text-red-700 font-bold px-1.5 py-0.5 rounded">
-        BUY
-      </span>
-    );
-  if (decision === "candidate")
-    return (
-      <span className="text-xs bg-orange-100 text-orange-700 font-semibold px-1.5 py-0.5 rounded">
-        CAND
-      </span>
-    );
-  if (isWatch)
-    return (
-      <span className="text-xs bg-blue-100 text-blue-700 font-semibold px-1.5 py-0.5 rounded">
-        WATCH
-      </span>
-    );
-  return (
-    <span className="text-xs bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded">
-      SKIP
-    </span>
-  );
-}
-
-function HitBadge({ hit }: { hit: boolean | null }) {
-  if (hit === null) return <span className="text-gray-300 text-xs">-</span>;
-  return hit ? (
-    <span className="text-xs bg-green-100 text-green-700 font-bold px-1 py-0.5 rounded">
-      的中
-    </span>
-  ) : (
-    <span className="text-xs text-gray-400">外れ</span>
-  );
-}
+type Tab = "bet" | "time" | "conf";
 
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString("ja-JP", {
-    timeZone: "Asia/Tokyo",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
+    timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit", hour12: false,
   });
 }
 
-function rowBg(r: ScheduleRow): string {
-  if (r.decision === "buy") return "bg-red-50";
-  if (r.decision === "candidate") return "bg-orange-50";
-  if (r.is_watch) return "bg-blue-50";
-  return "";
-}
-
-// ── テーブル ─────────────────────────────────────────────────────────────────
-
-function RaceTable({ rows }: { rows: ScheduleRow[] }) {
-  if (rows.length === 0) return null;
-  return (
-    <div className="overflow-x-auto rounded-lg border">
-      <table className="w-full text-sm border-collapse">
-        <thead>
-          <tr className="bg-gray-50 text-xs text-gray-500">
-            <th className="px-2 py-2 border-b text-left">場</th>
-            <th className="px-2 py-2 border-b">R</th>
-            <th className="px-2 py-2 border-b">締切</th>
-            <th className="px-2 py-2 border-b">状態</th>
-            <th className="px-2 py-2 border-b">判定</th>
-            <th className="px-2 py-2 border-b text-right">conf</th>
-            <th className="px-2 py-2 border-b text-right">gap</th>
-            <th className="px-2 py-2 border-b">pick</th>
-            <th className="px-2 py-2 border-b">展示</th>
-            <th className="px-2 py-2 border-b">結果</th>
-            <th className="px-2 py-2 border-b">的中</th>
-            <th className="px-2 py-2 border-b text-right">払戻</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr
-              key={`${r.race_id}-${i}`}
-              className={`border-b last:border-b-0 hover:brightness-95 transition-colors cursor-pointer ${rowBg(r)}`}
-              onClick={() => { window.location.href = `/races/${r.race_id}`; }}
-            >
-              <td className="px-2 py-1.5 font-medium">{r.stadium}</td>
-              <td className="px-2 py-1.5 text-center">{r.race_no}</td>
-              <td className="px-2 py-1.5 text-center font-mono text-xs">
-                {fmtTime(r.close_time)}
-              </td>
-              <td className="px-2 py-1.5 text-center">
-                <StatusBadge status={r.status} />
-              </td>
-              <td className="px-2 py-1.5 text-center">
-                <DecisionBadge decision={r.decision} isWatch={r.is_watch} />
-              </td>
-              <td className="px-2 py-1.5 text-right font-mono text-xs">
-                {r.confidence !== null ? r.confidence.toFixed(1) : (
-                  <span className="text-gray-300">-</span>
-                )}
-              </td>
-              <td className="px-2 py-1.5 text-right font-mono text-xs">
-                {r.gap !== null ? r.gap.toFixed(1) : (
-                  <span className="text-gray-300">-</span>
-                )}
-              </td>
-              <td className="px-2 py-1.5 font-mono text-xs">
-                {r.pick ?? <span className="text-gray-300">-</span>}
-              </td>
-              <td className="px-2 py-1.5 text-center">
-                {r.decision !== null ? (
-                  <span
-                    className={`text-xs px-1 rounded ${
-                      r.has_exhibition
-                        ? "bg-green-100 text-green-700"
-                        : "bg-yellow-50 text-yellow-600"
-                    }`}
-                  >
-                    {r.has_exhibition ? "済" : "未"}
-                  </span>
-                ) : (
-                  <span className="text-gray-300 text-xs">-</span>
-                )}
-              </td>
-              <td className="px-2 py-1.5 font-mono text-xs text-center">
-                {r.trifecta_result ?? <span className="text-gray-300">-</span>}
-              </td>
-              <td className="px-2 py-1.5 text-center">
-                <HitBadge hit={r.prediction_hit} />
-              </td>
-              <td className="px-2 py-1.5 text-right font-mono text-xs">
-                {r.payout !== null ? (
-                  `¥${r.payout.toLocaleString()}`
-                ) : (
-                  <span className="text-gray-300">-</span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ── サマリカード ──────────────────────────────────────────────────────────────
-
-function SummaryCard({
-  label,
-  value,
-  sub,
-  color,
-}: {
-  label: string;
-  value: number;
-  sub?: string;
-  color?: string;
-}) {
-  return (
-    <div className={`rounded-lg border p-2 text-center ${color ?? "bg-white"}`}>
-      <div className="text-xs text-gray-400 leading-tight">{label}</div>
-      <div className="text-xl font-bold mt-0.5">{value}</div>
-      {sub && <div className="text-xs text-gray-400">{sub}</div>}
-    </div>
-  );
-}
-
-// ── メインコンポーネント ──────────────────────────────────────────────────────
-
-/** YYYY-MM-DD の前日・翌日を返す */
 function offsetDate(base: string, days: number): string {
   const d = new Date(base);
   d.setDate(d.getDate() + days);
   return d.toISOString().slice(0, 10);
 }
 
-/** 自動リフレッシュ間隔 (ms) — レース開催時間帯のみリロード */
-const AUTO_REFRESH_MS = 30_000;
+// 艇番カラー
+const BOAT_BG   = ["bg-white ring-1 ring-gray-200", "bg-neutral-800", "bg-red-500", "bg-sky-500", "bg-yellow-400", "bg-green-500"];
+const BOAT_TEXT = ["text-gray-700", "text-white", "text-white", "text-white", "text-gray-800", "text-white"];
 
-export default function ScheduleClient({
-  rows,
-  summary,
-  today,
-  date,
-}: {
+function BoatBadge({ lane }: { lane: number }) {
+  return (
+    <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-sm font-black ${BOAT_BG[lane - 1] ?? BOAT_BG[0]} ${BOAT_TEXT[lane - 1] ?? BOAT_TEXT[0]}`}>
+      {lane}
+    </span>
+  );
+}
+
+// レースカード
+function RaceCard({ r, onClick }: { r: ScheduleRow; onClick: () => void }) {
+  const isBuy  = r.decision === "buy";
+  const isCand = r.decision === "candidate";
+  const isOpen = r.status === "scheduled";
+
+  const leftBar = isBuy  ? "border-l-4 border-l-rose-400" :
+                  isCand ? "border-l-4 border-l-orange-400" :
+                           "border-l-4 border-l-gray-100";
+
+  const decLabel = isBuy  ? <span className="text-xs font-bold px-2.5 py-0.5 rounded-full text-white" style={{ background: "linear-gradient(to right,#FF6B6B,#FF8E53)" }}>BUY</span> :
+                   isCand ? <span className="text-xs font-bold px-2.5 py-0.5 rounded-full text-white" style={{ background: "linear-gradient(to right,#FF8E53,#FFBE0B)" }}>検討</span> :
+                   r.decision === "skip" ? <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-400">見送り</span> :
+                   <span className="text-xs text-gray-300">未評価</span>;
+
+  const picks = r.pick ? r.pick.split("-").map(Number) : [];
+
+  return (
+    <div
+      onClick={onClick}
+      className={`bg-white rounded-2xl shadow-sm mb-2.5 overflow-hidden cursor-pointer hover:shadow-md transition-shadow ${leftBar}`}
+    >
+      <div className="px-4 py-3">
+        {/* 上段 */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <span className="font-black text-gray-800">{r.stadium}</span>
+            <span className="text-gray-400 font-semibold">{r.race_no}R</span>
+            <span className="text-xs text-gray-400">· 締切 {fmtTime(r.close_time)}</span>
+            {isOpen
+              ? <span className="text-xs bg-emerald-50 text-emerald-500 font-bold px-1.5 py-0.5 rounded-full">受付中</span>
+              : <span className="text-xs text-gray-300">締切済</span>
+            }
+          </div>
+          {decLabel}
+        </div>
+
+        {/* 艇番 + confidence */}
+        {picks.length > 0 && (
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
+              {picks.map((lane, i) => (
+                <span key={i} className="flex items-center gap-1">
+                  <BoatBadge lane={lane} />
+                  {i < picks.length - 1 && <span className="text-gray-200 text-xs">─</span>}
+                </span>
+              ))}
+            </div>
+            <span className="text-xs text-gray-300 ml-1">三連複</span>
+            {r.confidence != null && (
+              <span className={`ml-auto text-xs font-bold tabular-nums ${
+                r.confidence >= 75 ? "text-rose-500" : r.confidence >= 65 ? "text-orange-400" : "text-gray-400"
+              }`}>
+                {r.confidence.toFixed(1)}点
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* 結果 */}
+        {r.trifecta_result && (
+          <div className={`mt-2 pt-2 border-t border-gray-50 flex items-center gap-2 text-xs ${
+            r.prediction_hit ? "text-rose-500 font-bold" : "text-gray-400"
+          }`}>
+            {r.prediction_hit ? "🎉 的中" : "✗ 外れ"}
+            <span className="text-gray-400 font-normal">{r.trifecta_result}</span>
+            {r.payout && <span className="font-bold">¥{r.payout.toLocaleString()}</span>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function ScheduleClient({ rows, summary, today, date }: {
   rows: ScheduleRow[];
   summary: ScheduleSummary;
   today: string;
   date: string;
 }) {
-  const [tab, setTab] = useState<Tab>("time");
+  const [tab, setTab] = useState<Tab>("bet");
+  const router = useRouter();
 
-  // ── 自動リフレッシュ (30秒) — 当日 & 締切前レースがある場合のみ ───────────
   useEffect(() => {
-    if (date !== today) return;                 // 過去日は不要
-    if (summary.openCount === 0) return;        // 締切前レースがなければ不要
-    const id = setInterval(() => {
-      window.location.reload();
-    }, AUTO_REFRESH_MS);
+    if (date !== today || summary.openCount === 0) return;
+    const id = setInterval(() => window.location.reload(), 30_000);
     return () => clearInterval(id);
   }, [date, today, summary.openCount]);
 
-  // 精度順: 評価済みを confidence desc / gap desc でソート
-  const confRows = useMemo(
-    () =>
-      [...rows]
-        .filter((r) => r.decision !== null)
-        .sort((a, b) => {
-          const cd = (b.confidence ?? 0) - (a.confidence ?? 0);
-          return cd !== 0 ? cd : (b.gap ?? 0) - (a.gap ?? 0);
-        }),
-    [rows],
-  );
-
-  // 投票候補: buy / candidate のみ。締切前を先頭に。
-  const betRows = useMemo(
-    () =>
-      rows
-        .filter((r) => r.decision === "buy" || r.decision === "candidate")
+  const betRows = useMemo(() =>
+    rows.filter(r => r.decision === "buy" || r.decision === "candidate")
         .sort((a, b) => {
           if (a.status === "scheduled" && b.status !== "scheduled") return -1;
           if (a.status !== "scheduled" && b.status === "scheduled") return 1;
           return a.close_time.localeCompare(b.close_time);
         }),
-    [rows],
-  );
+    [rows]);
 
-  // 検証候補: watch のみ
-  const watchRows = useMemo(() => rows.filter((r) => r.is_watch), [rows]);
+  const confRows = useMemo(() =>
+    [...rows].filter(r => r.decision !== null)
+             .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0)),
+    [rows]);
 
-  const TABS: { key: Tab; label: string; count: number }[] = [
-    { key: "time",  label: "時間順",   count: rows.length },
-    { key: "conf",  label: "精度順",   count: confRows.length },
-    { key: "bet",   label: "投票候補", count: betRows.length },
-    { key: "watch", label: "検証候補", count: watchRows.length },
+  const TABS: { key: Tab; label: string; count: number; icon: string }[] = [
+    { key: "bet",  label: "投票候補", count: betRows.length,  icon: "🎯" },
+    { key: "time", label: "全レース", count: rows.length,     icon: "🕐" },
+    { key: "conf", label: "精度順",   count: confRows.length, icon: "📈" },
   ];
 
+  const displayRows = tab === "bet" ? betRows : tab === "conf" ? confRows : rows;
+
   return (
-    <main className="max-w-5xl mx-auto px-4 py-6">
-      {/* ── ヘッダ ────────────────────────────────────── */}
-      <div className="flex items-center justify-between mb-1">
-        <h1 className="text-xl font-bold">レーススケジュール</h1>
-        {/* 日付ナビゲーション */}
-        <div className="flex items-center gap-1">
-          <a
-            href={`/schedule?date=${offsetDate(date, -1)}`}
-            className="px-2 py-1 text-xs border rounded hover:bg-gray-50 text-gray-500"
-            title="前日"
-          >←</a>
-          <span className={`text-xs px-2 py-1 rounded font-mono ${
-            date === today ? "bg-blue-100 text-blue-700 font-bold" : "bg-gray-100 text-gray-600"
-          }`}>
-            {date}
-            {date === today && <span className="ml-1 text-blue-500">今日</span>}
-          </span>
-          <a
-            href={`/schedule?date=${offsetDate(date, 1)}`}
-            className={`px-2 py-1 text-xs border rounded hover:bg-gray-50 text-gray-500 ${
-              date >= today ? "opacity-40 pointer-events-none" : ""
-            }`}
-            title="翌日"
-          >→</a>
+    <main className="max-w-lg mx-auto px-4 py-5">
+
+      {/* ── ヘッダー ───────────────────────────────── */}
+      <div
+        className="rounded-3xl p-5 mb-4 text-white shadow-lg"
+        style={{ background: "linear-gradient(135deg, #FF6B6B 0%, #FF8E53 60%, #FFBE0B 100%)" }}
+      >
+        <p className="text-white/60 text-xs mb-1">スケジュール</p>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <a
+              href={`/schedule?date=${offsetDate(date, -1)}`}
+              className="bg-white/20 rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold hover:bg-white/30 transition-colors"
+            >‹</a>
+            <span className="font-black text-lg">
+              {date === today ? "今日" : date.slice(5).replace("-", "/")}
+            </span>
+            <a
+              href={`/schedule?date=${offsetDate(date, 1)}`}
+              className={`bg-white/20 rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold transition-colors ${
+                date >= today ? "opacity-30 pointer-events-none" : "hover:bg-white/30"
+              }`}
+            >›</a>
+          </div>
+          {date === today && summary.openCount > 0 && (
+            <span className="bg-white/20 text-xs font-bold px-3 py-1 rounded-full">
+              🔄 30秒更新
+            </span>
+          )}
+        </div>
+
+        {/* サマリー数字 */}
+        <div className="flex gap-2">
+          {[
+            { label: "BUY",    v: summary.buyCount,       style: "bg-white/30" },
+            { label: "検討",   v: summary.candidateCount, style: "bg-white/20" },
+            { label: "展示済", v: summary.exhibitionRaces, style: "bg-white/15" },
+            { label: "受付中", v: summary.openCount,      style: "bg-white/15" },
+          ].map(c => (
+            <div key={c.label} className={`${c.style} rounded-2xl px-3 py-1.5 text-center flex-1`}>
+              <div className="text-xl font-black">{c.v}</div>
+              <div className="text-xs text-white/70">{c.label}</div>
+            </div>
+          ))}
         </div>
       </div>
-      {/* 自動リフレッシュ表示 */}
-      {date === today && summary.openCount > 0 && (
-        <p className="text-xs text-blue-400 mb-1">
-          🔄 締切前 {summary.openCount} レースあり — 30秒ごとに自動更新
-        </p>
-      )}
-      <div className="flex gap-3 text-xs text-gray-400 mb-5">
-        <a href="/ops"       className="underline hover:text-gray-600">運用チェック</a>
-        <a href="/roll-plan" className="underline hover:text-gray-600">転がし計画</a>
-        <a href="/debug"     className="underline hover:text-gray-600">デバッグ</a>
-        <a href="/stats"     className="underline hover:text-gray-600">長期統計</a>
-      </div>
 
-      {/* ── サマリ ────────────────────────────────────── */}
-      <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-3">
-        <SummaryCard label="全レース"  value={summary.totalRaces} />
-        <SummaryCard label="評価済み"  value={summary.evaluatedRaces}
-          sub={`/ ${summary.totalRaces}`} />
-        <SummaryCard label="展示済み"  value={summary.exhibitionRaces}
-          sub={`/ ${summary.evaluatedRaces}`} />
-        <SummaryCard label="締切前"    value={summary.openCount}
-          color="bg-green-50 border-green-200" />
-        <SummaryCard label="締切済み"  value={summary.closedCount}
-          color="bg-gray-50" />
-      </div>
-      <div className="flex flex-wrap gap-2 mb-5">
-        <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-2.5 py-1 rounded-full text-xs font-bold">
-          BUY <span className="bg-red-200 rounded-full px-1.5">{summary.buyCount}</span>
-        </span>
-        <span className="inline-flex items-center gap-1 bg-orange-100 text-orange-700 px-2.5 py-1 rounded-full text-xs font-semibold">
-          CANDIDATE <span className="bg-orange-200 rounded-full px-1.5">{summary.candidateCount}</span>
-        </span>
-        <span className="inline-flex items-center gap-1 bg-blue-100 text-blue-700 px-2.5 py-1 rounded-full text-xs font-semibold">
-          WATCH <span className="bg-blue-200 rounded-full px-1.5">{summary.watchCount}</span>
-        </span>
-        <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-500 px-2.5 py-1 rounded-full text-xs">
-          SKIP <span className="bg-gray-200 rounded-full px-1.5">{summary.skipCount}</span>
-        </span>
-      </div>
-
-      {/* ── タブ ──────────────────────────────────────── */}
-      <div className="flex border-b mb-4 overflow-x-auto">
-        {TABS.map((t) => (
+      {/* ── タブ ──────────────────────────────────── */}
+      <div className="flex gap-2 mb-4">
+        {TABS.map(t => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`flex-none flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-2xl text-sm font-bold transition-all ${
               tab === t.key
-                ? "border-blue-500 text-blue-600"
-                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                ? "text-white shadow-sm"
+                : "bg-white text-gray-400 hover:text-gray-600"
             }`}
+            style={tab === t.key ? { background: "linear-gradient(to right, #FF6B6B, #FF8E53)" } : {}}
           >
-            {t.label}
-            <span
-              className={`text-xs px-1.5 py-0.5 rounded-full ${
-                tab === t.key
-                  ? "bg-blue-100 text-blue-600"
-                  : "bg-gray-100 text-gray-400"
-              }`}
-            >
+            <span>{t.icon}</span>
+            <span>{t.label}</span>
+            <span className={`text-xs ${tab === t.key ? "text-white/80" : "text-gray-300"}`}>
               {t.count}
             </span>
           </button>
         ))}
       </div>
 
-      {/* ── 時間順 ────────────────────────────────────── */}
-      {tab === "time" && (
-        <section>
-          <p className="text-xs text-gray-400 mb-2">
-            全 {rows.length} レース｜締切時刻が早い順
+      {/* ── リスト ─────────────────────────────────── */}
+      {displayRows.length === 0 ? (
+        <div className="text-center py-16">
+          <p className="text-4xl mb-3">⛵</p>
+          <p className="font-bold text-gray-500">
+            {tab === "bet" ? "投票候補がありません" : "データがありません"}
           </p>
-          <RaceTable rows={rows} />
-          {rows.length === 0 && (
-            <p className="text-center text-gray-400 py-12">
-              本日のレースデータがありません
+          {tab === "bet" && (
+            <p className="text-xs text-gray-400 mt-1">展示スキャン後に更新されます</p>
+          )}
+        </div>
+      ) : (
+        <div>
+          {tab === "bet" && (
+            <p className="text-xs text-gray-400 mb-3">
+              受付中を先頭に表示 · タップで詳細
             </p>
           )}
-        </section>
-      )}
-
-      {/* ── 精度順 ────────────────────────────────────── */}
-      {tab === "conf" && (
-        <section>
-          <p className="text-xs text-gray-400 mb-2">
-            評価済み {confRows.length} レース｜confidence → gap の降順
-          </p>
-          <RaceTable rows={confRows} />
-          {confRows.length === 0 && (
-            <p className="text-center text-gray-400 py-12">
-              評価済みレースがありません
-            </p>
-          )}
-        </section>
-      )}
-
-      {/* ── 投票候補 ──────────────────────────────────── */}
-      {tab === "bet" && (
-        <section>
-          {betRows.length === 0 ? (
-            <div className="text-center py-12">
-              <p className="text-gray-500 font-medium">今日の投票候補はありません</p>
-              <p className="text-xs text-gray-300 mt-1">
-                buy: confidence ≥ 70 かつ gap ≥ 10 ／ candidate: confidence ≥ 62 かつ gap ≥ 7
-              </p>
-            </div>
-          ) : (
-            <>
-              <div className="flex flex-wrap items-center gap-3 mb-3">
-                <p className="text-sm text-gray-700">
-                  投票候補 <span className="font-bold">{betRows.length} 件</span>
-                </p>
-                <span className="text-xs bg-amber-50 border border-amber-200 text-amber-700 px-2.5 py-1 rounded-full">
-                  想定投資額 ¥{(betRows.length * 100).toLocaleString()}（1点100円）
-                </span>
-              </div>
-              <RaceTable rows={betRows} />
-            </>
-          )}
-        </section>
-      )}
-
-      {/* ── 検証候補 ──────────────────────────────────── */}
-      {tab === "watch" && (
-        <section>
-          <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3 text-xs text-blue-700">
-            <span className="text-base leading-none mt-0.5">🔍</span>
-            <div>
-              <span className="font-bold">検証候補（WATCH）は実投票対象外です。</span>
-              <span className="ml-1">
-                confidence ≥ 55 かつ gap ≥ 7 を満たすが buy / candidate 基準未満のレース。
-                将来の閾値調整のために記録しています。
-              </span>
-            </div>
-          </div>
-          {watchRows.length === 0 ? (
-            <div className="text-center py-12">
-              <p className="text-gray-500 font-medium">今日の検証候補はありません</p>
-              <p className="text-xs text-gray-300 mt-1">
-                watch: confidence ≥ 55 かつ gap ≥ 7（荒れなし）
-              </p>
-            </div>
-          ) : (
-            <>
-              <p className="text-xs text-gray-400 mb-2">
-                {watchRows.length} 件の検証候補｜実投票対象外
-              </p>
-              <RaceTable rows={watchRows} />
-            </>
-          )}
-        </section>
+          {displayRows.map(r => (
+            <RaceCard
+              key={r.race_id}
+              r={r}
+              onClick={() => router.push(`/races/${r.race_id}`)}
+            />
+          ))}
+        </div>
       )}
     </main>
   );
