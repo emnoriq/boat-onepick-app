@@ -4,18 +4,19 @@
 
 【スコア構成】
 朝スコア (70点上限):
-  選手力  20点  = 級別10 + 全国勝率5 + ボート2連対率5
+  選手力  20点  = 級別10 + 全国3連対率7 + ボート2連対率3
   モーター 15点  ← 艦隊平均との相対評価（全艇平均=7.5点）
-  枠      10点
+  枠      8点   ← 枠有利スコア
+  コース適性 7点 ← コース別1着率（三連複ベット向け強化）
   スタート 10点
-  当地相性 10点
-  合計最大  65点 (安定した選手ほど満点に近づく)
+  当地相性 10点  ← 当地3連対率（三連複ベット直結指標）
+  合計最大  70点
 
 直前スコア (30点上限, 理論最大33点をcap):
   展示タイム  13点  ← 艦隊平均との相対評価（スケール拡大 25→33）
   展示ST       5点  ← 艦隊平均との相対評価
   チルト補正   4点  ← チルト角から周回安定度を推定
-  進入補正     8点  ← 実コース位置ベース（コース1=6pt基準）
+  進入補正     8点  ← 実コース位置ベース（コース1=6pt基準）+コース別実績
   風波補正     3点
 
 修正履歴:
@@ -31,6 +32,10 @@
   v6: 期待値(EV)計算を追加
       全20組み合わせのEVを算出し最大EV組み合わせを推薦
       「強い艇を当てる」→「市場が過小評価する組み合わせを見つける」に転換
+  v7: 選手詳細データ統合
+      全国3連対率・当地3連対率を三連複ベット向け指標として採用
+      コース別1着率（c1_win_rate〜c6_win_rate）をスコアに反映
+      朝スコア: 枠10→8pt / コース適性7pt新設 / player内訳変更
 """
 
 import math
@@ -43,14 +48,26 @@ from typing import Optional
 class EntryData:
     lane: int
     racer_name: str
-    racer_class: str = ""           # A1 / A2 / B1 / B2
-    national_win_rate: float = 0.0  # 全国勝率
-    local_win_rate: float = 0.0     # 当地勝率
-    motor_rate: float = 0.0         # モーター2連対率
-    boat_rate: float = 0.0          # ボート2連対率
-    avg_st: float = 0.15            # 平均スタートタイム
-    f_count: int = 0                # F(フライング)回数
-    l_count: int = 0                # L(出遅れ)回数
+    racer_class: str = ""            # A1 / A2 / B1 / B2
+    racer_no: str = ""               # 登録番号
+    national_win_rate: float = 0.0   # 全国勝率
+    national_top2_rate: float = 0.0  # 全国2連対率 (%)
+    national_top3_rate: float = 0.0  # 全国3連対率 (%) ← 三連複ベット向け主要指標
+    local_win_rate: float = 0.0      # 当地勝率
+    local_top2_rate: float = 0.0     # 当地2連対率 (%)
+    local_top3_rate: float = 0.0     # 当地3連対率 (%) ← 三連複ベット向け主要指標
+    motor_rate: float = 0.0          # モーター2連対率
+    boat_rate: float = 0.0           # ボート2連対率
+    avg_st: float = 0.15             # 平均スタートタイム
+    f_count: int = 0                 # F(フライング)回数
+    l_count: int = 0                 # L(出遅れ)回数
+    # コース別1着率 (%) — fetch_racer_stats.py で取得
+    c1_win_rate: float = 0.0   # コース1からの1着率
+    c2_win_rate: float = 0.0   # コース2からの1着率
+    c3_win_rate: float = 0.0   # コース3からの1着率
+    c4_win_rate: float = 0.0   # コース4からの1着率
+    c5_win_rate: float = 0.0   # コース5からの1着率
+    c6_win_rate: float = 0.0   # コース6からの1着率
     # 直前情報
     exhibition_time: Optional[float] = None   # 展示タイム
     exhibition_st: Optional[float] = None     # 展示スタートタイム
@@ -93,8 +110,48 @@ def _class_score(racer_class: str) -> float:
     return table.get(racer_class.upper(), 3.0)
 
 
+def _national_top3_score(rate: float) -> float:
+    """
+    全国3連対率を0〜7点にマッピング（三連複ベット向け）
+
+    3連対率 (%) の典型値: B2=30%, B1=40%, A2=50%, A1=60%
+    50% → 5点、65% → 7点、35% → 0点
+    """
+    return min(7.0, max(0.0, (rate - 35.0) * 0.467))
+
+
+def _local_top3_score(rate: float) -> float:
+    """
+    当地3連対率を0〜10点にマッピング（三連複ベット直結）
+
+    当地は場になれているほど高い。30%未満=苦手場、55%以上=得意場
+    55% → 10点、30% → 0点
+    """
+    return min(10.0, max(0.0, (rate - 30.0) * 0.4))
+
+
+def _course_affinity_score(entry: "EntryData", lane: int) -> float:
+    """
+    コース別1着率スコア (0〜7点)
+
+    選手がそのコースから何%勝つかを評価。
+    平均的な勝率(16.7%=1/6) を基準に相対評価。
+    40% → 7点, 25% → 4点, 16.7% → 1.4点, 5% → 0点
+
+    lane: 出走枠番 (approach_lane が分かるまでは枠番で代用)
+    """
+    rates = [entry.c1_win_rate, entry.c2_win_rate, entry.c3_win_rate,
+             entry.c4_win_rate, entry.c5_win_rate, entry.c6_win_rate]
+    # コース別データが全てゼロなら中間値を返す
+    if all(r == 0.0 for r in rates):
+        return 3.5  # データなし: 中間値
+    idx = max(0, min(5, lane - 1))
+    rate = rates[idx]
+    return min(7.0, max(0.0, rate * 0.175))
+
+
 def _win_rate_score(rate: float) -> float:
-    """勝率を0〜5点にマッピング"""
+    """全国勝率を0〜5点にマッピング（後方互換・直接は使用しない）"""
     return min(5.0, max(0.0, (rate - 3.0) * 2.0))
 
 
@@ -117,9 +174,9 @@ def _boat_rate_score(rate: float) -> float:
 def _lane_score(lane: int) -> float:
     """
     枠有利不利 (インほど有利)
-    1号艇: 10点、以降1.8点ずつ減少
+    1号艇: 8点、以降1.4点ずつ減少 (コース適性7点と合算で最大15点)
     """
-    return max(0.0, 10.0 - (lane - 1) * 1.8)
+    return max(0.0, 8.0 - (lane - 1) * 1.4)
 
 
 def _st_score(avg_st: float, f_count: int, l_count: int) -> float:
@@ -139,32 +196,42 @@ def _local_rate_score(rate: float) -> float:
 
 def morning_score(entry: EntryData, race_avg_motor: Optional[float] = None) -> float:
     """
-    朝スコア計算 (最大65点程度 / cap 70点)
+    朝スコア計算 (最大70点cap)
 
     Args:
         race_avg_motor: 艦隊全艇のモーター2連対率平均。
                         指定時は相対評価、None の場合は固定ベースライン(40%)評価。
+
+    【v7 変更点】
+    - 選手力: 全国3連対率(7pt)採用 → 三連複ベットに直結した指標
+    - 枠: 10pt→8pt (コース適性と合算)
+    - コース適性: 7pt新設 → コース別1着率で個人の得手不得手を反映
+    - 当地相性: 当地3連対率(10pt) → 三連複ベット直結
     """
-    # 選手力 (20点)
+    # 選手力 (20点): 級別(10) + 全国3連対率(7) + ボート2連対率(3)
     player = min(20.0,
-        _class_score(entry.racer_class)               # 10
-        + _win_rate_score(entry.national_win_rate)    # 5
-        + _boat_rate_score(entry.boat_rate)           # 5
+        _class_score(entry.racer_class)                   # 10
+        + _national_top3_score(entry.national_top3_rate)  # 0-7
+        + min(3.0, _boat_rate_score(entry.boat_rate))     # 0-3
     )
 
     # モーター (15点) — 艦隊平均との相対評価
     motor = _motor_score(entry.motor_rate, race_avg_motor if race_avg_motor is not None else 40.0)
 
-    # 枠・コース (10点)
+    # 枠スコア (8点)
     lane = _lane_score(entry.lane)
+
+    # コース適性 (7点) — コース別1着率（データなし時は中間値3.5）
+    course = _course_affinity_score(entry, entry.lane)
 
     # スタート力 (10点)
     st = _st_score(entry.avg_st, entry.f_count, entry.l_count)
 
-    # 当地相性 (10点)
-    local = _local_rate_score(entry.local_win_rate)
+    # 当地相性 (10点) — 当地3連対率（三連複ベット直結）
+    local = _local_top3_score(entry.local_top3_rate) if entry.local_top3_rate > 0 \
+            else _local_rate_score(entry.local_win_rate)  # フォールバック
 
-    return min(70.0, player + motor + lane + st + local)
+    return min(70.0, player + motor + lane + course + st + local)
 
 
 def pre_race_score(
@@ -249,6 +316,10 @@ def pre_race_score(
         approach_score = min(8.0, max(0.0, effective_course_score + movement))
         if not condition.approach_stable:
             approach_score = max(0.0, approach_score - 1.5)
+        # コース別1着率ボーナス: 実際の進入コースでの個人実績を反映 (±1.5点)
+        course_bonus = _course_affinity_score(entry, entry.approach_lane)
+        # course_affinity(0-7pt) を ±1.5pt に変換 (中間3.5→0補正)
+        approach_score = min(8.0, max(0.0, approach_score + (course_bonus - 3.5) * 0.3))
     else:
         # コース情報なし: 枠番から推定
         approach_score = 4.0 if condition.approach_stable else 2.0

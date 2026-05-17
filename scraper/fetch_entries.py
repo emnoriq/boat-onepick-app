@@ -88,16 +88,33 @@ def fetch_entries(stadium_code: str, race_no: int, target_date: date) -> list[En
         # 選手情報 (td[2])
         info_td = tds[2]
         racer_class = ""
+        racer_no = ""
         fs11 = info_td.find("div", class_="is-fs11")
         if fs11:
             span = fs11.find("span")
             racer_class = (span.get_text(strip=True) if span else "").upper()
+            # 登録番号は span の前のテキストノード (例: "4528/B1" の "4528")
+            text = fs11.get_text(separator=" ", strip=True)
+            for token in text.split():
+                if token.isdigit() and len(token) >= 4:
+                    racer_no = token
+                    break
 
         racer_name = ""
         fs18 = info_td.find("div", class_="is-fs18")
         if fs18:
             a = fs18.find("a")
-            racer_name = (a.get_text(strip=True) if a else fs18.get_text(strip=True))
+            if a:
+                racer_name = a.get_text(strip=True)
+                # 登録番号をリンクのhrefから取得 (より確実)
+                href = a.get("href", "")
+                if "toban=" in href:
+                    try:
+                        racer_no = href.split("toban=")[1].split("&")[0].strip()
+                    except (IndexError, ValueError):
+                        pass
+            else:
+                racer_name = fs18.get_text(strip=True)
 
         # F/L/平均ST (td[3])
         fl = _lines(tds[3])
@@ -115,11 +132,16 @@ def fetch_entries(stadium_code: str, race_no: int, target_date: date) -> list[En
                 try: avg_st = float(token)
                 except ValueError: pass
 
-        # 全国勝率 (td[4] line0), 当地勝率 (td[5] line0)
+        # 全国勝率/2連対率/3連対率 (td[4])
+        # 当地勝率/2連対率/3連対率 (td[5])
         nat = _lines(tds[4])
         loc = _lines(tds[5])
-        national_win_rate = _float(nat, 0)
-        local_win_rate    = _float(loc, 0)
+        national_win_rate  = _float(nat, 0)
+        national_top2_rate = _float(nat, 1)   # 全国2連対率(%)
+        national_top3_rate = _float(nat, 2)   # 全国3連対率(%) ← 三連複ベット向け
+        local_win_rate     = _float(loc, 0)
+        local_top2_rate    = _float(loc, 1)   # 当地2連対率(%)
+        local_top3_rate    = _float(loc, 2)   # 当地3連対率(%) ← 三連複ベット向け
 
         # モーター2連対率 (td[6] line1), ボート2連対率 (td[7] line1)
         mot = _lines(tds[6])
@@ -131,8 +153,13 @@ def fetch_entries(stadium_code: str, race_no: int, target_date: date) -> list[En
             lane=lane,
             racer_name=racer_name,
             racer_class=racer_class,
+            racer_no=racer_no,
             national_win_rate=national_win_rate,
+            national_top2_rate=national_top2_rate,
+            national_top3_rate=national_top3_rate,
             local_win_rate=local_win_rate,
+            local_top2_rate=local_top2_rate,
+            local_top3_rate=local_top3_rate,
             motor_rate=motor_rate,
             boat_rate=boat_rate,
             avg_st=avg_st,

@@ -27,6 +27,7 @@ from fetch_entries import fetch_entries
 from fetch_exhibition import fetch_exhibition
 from fetch_results import fetch_result
 from fetch_odds import fetch_trifecta_box_odds, get_pick_payout
+from fetch_racer_stats import fetch_course_win_rates, apply_course_win_rates
 from scoring import score_entries, decide, RaceCondition, EntryData
 
 logging.basicConfig(level=logging.INFO,
@@ -84,19 +85,38 @@ def _pre_race_worker(args: tuple) -> tuple:
             } for e in entry_objects]
 
         # ② DB の dict から EntryData を組み立て
-        # f_count / l_count は以前のレコードでは 0 になる場合がある (旧データ互換)
+        # 旧データでは top2/top3 rate が NULL の場合があるため or 0.0 でフォールバック
         entries = [EntryData(
             lane=e["lane"],
             racer_name=e.get("racer_name", ""),
             racer_class=e.get("racer_class") or "",
+            racer_no=e.get("racer_no") or "",
             national_win_rate=e.get("national_win_rate") or 0.0,
+            national_top2_rate=e.get("national_top2_rate") or 0.0,
+            national_top3_rate=e.get("national_top3_rate") or 0.0,
             local_win_rate=e.get("local_win_rate") or 0.0,
+            local_top2_rate=e.get("local_top2_rate") or 0.0,
+            local_top3_rate=e.get("local_top3_rate") or 0.0,
             motor_rate=e.get("motor_rate") or 0.0,
             boat_rate=e.get("boat_rate") or 0.0,
             avg_st=e.get("avg_st") or 0.15,
             f_count=int(e.get("f_count") or 0),
             l_count=int(e.get("l_count") or 0),
+            c1_win_rate=e.get("c1_win_rate") or 0.0,
+            c2_win_rate=e.get("c2_win_rate") or 0.0,
+            c3_win_rate=e.get("c3_win_rate") or 0.0,
+            c4_win_rate=e.get("c4_win_rate") or 0.0,
+            c5_win_rate=e.get("c5_win_rate") or 0.0,
+            c6_win_rate=e.get("c6_win_rate") or 0.0,
         ) for e in sorted(existing_entries, key=lambda x: x["lane"])]
+
+        # ② ½: コース別1着率を取得（DB未取得 or racer_no あり時）
+        for entry in entries:
+            if entry.racer_no and all(
+                getattr(entry, f"c{i}_win_rate") == 0.0 for i in range(1, 7)
+            ):
+                rates = fetch_course_win_rates(entry.racer_no)
+                apply_course_win_rates(entry, rates)
 
         # ③ 展示情報取得（entries を in-place で更新）
         condition = fetch_exhibition(code, race_no, today, entries)
@@ -238,17 +258,22 @@ def morning_scan(today: date,
             entry_results.append((race_id, name, race_no, entry_objects))
             for e in entry_objects:
                 all_entries_payload.append({
-                    "race_id":           race_id,
-                    "lane":              e.lane,
-                    "racer_name":        e.racer_name,
-                    "racer_class":       e.racer_class,
-                    "national_win_rate": e.national_win_rate,
-                    "local_win_rate":    e.local_win_rate,
-                    "motor_rate":        e.motor_rate,
-                    "boat_rate":         e.boat_rate,
-                    "avg_st":            e.avg_st,
-                    "f_count":           e.f_count,
-                    "l_count":           e.l_count,
+                    "race_id":            race_id,
+                    "lane":               e.lane,
+                    "racer_name":         e.racer_name,
+                    "racer_class":        e.racer_class,
+                    "racer_no":           e.racer_no,
+                    "national_win_rate":  e.national_win_rate,
+                    "national_top2_rate": e.national_top2_rate,
+                    "national_top3_rate": e.national_top3_rate,
+                    "local_win_rate":     e.local_win_rate,
+                    "local_top2_rate":    e.local_top2_rate,
+                    "local_top3_rate":    e.local_top3_rate,
+                    "motor_rate":         e.motor_rate,
+                    "boat_rate":          e.boat_rate,
+                    "avg_st":             e.avg_st,
+                    "f_count":            e.f_count,
+                    "l_count":            e.l_count,
                 })
 
     t_p4 = time.monotonic() - t0
@@ -392,22 +417,35 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
         pred = decide(scores, condition, lane1_approach=lane1_approach,
                       all_odds=odds if odds else None)
 
-        # entries ペイロード (展示情報・チルト込み)
+        # entries ペイロード (展示情報・チルト・コース別1着率込み)
         all_entries_payload.extend([{
-            "race_id":          race_id,
-            "lane":             e.lane,
-            "racer_name":       e.racer_name,
-            "racer_class":      e.racer_class,
-            "national_win_rate": e.national_win_rate,
-            "local_win_rate":   e.local_win_rate,
-            "motor_rate":       e.motor_rate,
-            "boat_rate":        e.boat_rate,
-            "avg_st":           e.avg_st,
-            "exhibition_time":  e.exhibition_time,
-            "exhibition_st":    e.exhibition_st,
-            "approach_lane":    e.approach_lane,
-            "tilt":             e.tilt,
-            "entry_score":      score_map.get(e.lane),
+            "race_id":            race_id,
+            "lane":               e.lane,
+            "racer_name":         e.racer_name,
+            "racer_class":        e.racer_class,
+            "racer_no":           e.racer_no,
+            "national_win_rate":  e.national_win_rate,
+            "national_top2_rate": e.national_top2_rate,
+            "national_top3_rate": e.national_top3_rate,
+            "local_win_rate":     e.local_win_rate,
+            "local_top2_rate":    e.local_top2_rate,
+            "local_top3_rate":    e.local_top3_rate,
+            "motor_rate":         e.motor_rate,
+            "boat_rate":          e.boat_rate,
+            "avg_st":             e.avg_st,
+            "f_count":            e.f_count,
+            "l_count":            e.l_count,
+            "c1_win_rate":        e.c1_win_rate,
+            "c2_win_rate":        e.c2_win_rate,
+            "c3_win_rate":        e.c3_win_rate,
+            "c4_win_rate":        e.c4_win_rate,
+            "c5_win_rate":        e.c5_win_rate,
+            "c6_win_rate":        e.c6_win_rate,
+            "exhibition_time":    e.exhibition_time,
+            "exhibition_st":      e.exhibition_st,
+            "approach_lane":      e.approach_lane,
+            "tilt":               e.tilt,
+            "entry_score":        score_map.get(e.lane),
         } for e in entries])
 
         # reason に展示未取得マーカーを付与
@@ -524,20 +562,33 @@ def pre_race_scan_single(today: date, stadium_name: str, race_no: int) -> None:
         reason_lines = ["[展示未取得]"] + reason_lines
 
     entries_payload = [{
-        "race_id":          race_id,
-        "lane":             e.lane,
-        "racer_name":       e.racer_name,
-        "racer_class":      e.racer_class,
-        "national_win_rate": e.national_win_rate,
-        "local_win_rate":   e.local_win_rate,
-        "motor_rate":       e.motor_rate,
-        "boat_rate":        e.boat_rate,
-        "avg_st":           e.avg_st,
-        "exhibition_time":  e.exhibition_time,
-        "exhibition_st":    e.exhibition_st,
-        "approach_lane":    e.approach_lane,
-        "tilt":             e.tilt,
-        "entry_score":      score_map.get(e.lane),
+        "race_id":            race_id,
+        "lane":               e.lane,
+        "racer_name":         e.racer_name,
+        "racer_class":        e.racer_class,
+        "racer_no":           e.racer_no,
+        "national_win_rate":  e.national_win_rate,
+        "national_top2_rate": e.national_top2_rate,
+        "national_top3_rate": e.national_top3_rate,
+        "local_win_rate":     e.local_win_rate,
+        "local_top2_rate":    e.local_top2_rate,
+        "local_top3_rate":    e.local_top3_rate,
+        "motor_rate":         e.motor_rate,
+        "boat_rate":          e.boat_rate,
+        "avg_st":             e.avg_st,
+        "f_count":            e.f_count,
+        "l_count":            e.l_count,
+        "c1_win_rate":        e.c1_win_rate,
+        "c2_win_rate":        e.c2_win_rate,
+        "c3_win_rate":        e.c3_win_rate,
+        "c4_win_rate":        e.c4_win_rate,
+        "c5_win_rate":        e.c5_win_rate,
+        "c6_win_rate":        e.c6_win_rate,
+        "exhibition_time":    e.exhibition_time,
+        "exhibition_st":      e.exhibition_st,
+        "approach_lane":      e.approach_lane,
+        "tilt":               e.tilt,
+        "entry_score":        score_map.get(e.lane),
     } for e in entries]
 
     bulk_upsert_entries(db, entries_payload)
