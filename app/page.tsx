@@ -1,5 +1,5 @@
 import { getTodayPredictions } from "@/lib/supabase";
-import RaceCard from "@/components/RaceCard";
+import HomeList from "./HomeList";
 
 export const dynamic = "force-dynamic";
 
@@ -75,69 +75,13 @@ export default async function HomePage() {
         )}
       </div>
 
-      {/* ── データなし ───────────────────────────────────────────── */}
-      {!hasBets && pending.length === 0 && skipRaces.length === 0 && (
-        <div className="text-center py-16">
-          <p className="text-4xl mb-3">⛵</p>
-          <p className="font-bold text-gray-500 mb-1">本日のデータがまだありません</p>
-          <p className="text-sm text-gray-400">朝6時以降にスキャンが始まります</p>
-        </div>
-      )}
-
-      {/* ── 🎯 投票確定（BUY） ──────────────────────────────────── */}
-      {buyRaces.length > 0 && (
-        <section className="mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-1 h-5 rounded-full" style={{ background: "linear-gradient(to bottom, #FF6B6B, #FF8E53)" }} />
-            <h2 className="text-sm font-bold text-gray-700">
-              投票確定
-              <span className="ml-2 text-xs font-normal text-gray-400">BUY · {buyRaces.length}件</span>
-            </h2>
-          </div>
-          {buyRaces.map((r, i) => <RaceCard key={r.id} race={r} rank={i + 1} />)}
-        </section>
-      )}
-
-      {/* ── 📌 投票検討（CANDIDATE） ─────────────────────────────── */}
-      {candRaces.length > 0 && (
-        <section className="mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-1 h-5 rounded-full" style={{ background: "linear-gradient(to bottom, #FF8E53, #FFBE0B)" }} />
-            <h2 className="text-sm font-bold text-gray-700">
-              投票検討
-              <span className="ml-2 text-xs font-normal text-gray-400">CANDIDATE · {candRaces.length}件</span>
-            </h2>
-          </div>
-          {candRaces.map((r, i) => <RaceCard key={r.id} race={r} rank={buyRaces.length + i + 1} />)}
-        </section>
-      )}
-
-      {/* ── ⏳ 展示待ち ───────────────────────────────────────────── */}
-      {pending.length > 0 && (
-        <section className="mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-1 h-5 rounded-full bg-gray-200" />
-            <h2 className="text-sm font-semibold text-gray-400">
-              展示待ち
-              <span className="ml-2 text-xs font-normal">直前スキャン後に更新 · {pending.length}件</span>
-            </h2>
-          </div>
-          {pending.map(r => <RaceCard key={r.id} race={r} />)}
-        </section>
-      )}
-
-      {/* ── 見送り（折りたたみ） ────────────────────────────────── */}
-      {skipRaces.length > 0 && (
-        <details className="mb-6 group">
-          <summary className="flex items-center gap-2 cursor-pointer text-xs text-gray-400 hover:text-gray-500 select-none list-none mb-3">
-            <span className="group-open:rotate-90 transition-transform inline-block">▶</span>
-            <span>見送り {skipRaces.length}件</span>
-          </summary>
-          <div className="opacity-50">
-            {skipRaces.map(r => <RaceCard key={r.id} race={r} />)}
-          </div>
-        </details>
-      )}
+      {/* ── レースリスト（判定順 / 時間順 切り替え） ──────────────── */}
+      <HomeList
+        buyRaces={buyRaces}
+        candRaces={candRaces}
+        pending={pending}
+        skipRaces={skipRaces}
+      />
 
       {/* ── ボトムナビ ──────────────────────────────────────────── */}
       <div className="pt-4 mt-2 grid grid-cols-3 gap-3 text-center">
