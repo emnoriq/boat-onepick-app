@@ -81,3 +81,64 @@ jobs:
             # full モード: 締切前レースを全件処理
             python3 scraper/main.py pre_race
           fi
+
+      - name: Notify BUY races via ntfy
+        if: ${{ github.event.inputs.stadium == '' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, sys
+          sys.path.insert(0, "scraper")
+          from db import get_client
+          from datetime import date, datetime, timezone, timedelta
+
+          db = get_client()
+          JST = timezone(timedelta(hours=9))
+          today = datetime.now(JST).date().isoformat()
+
+          # 展示あり確定のBUY/CANDIDATEを取得
+          races = db.table("races").select("id,stadium,race_no,close_time").eq("race_date", today).eq("status","final").execute().data
+          race_map = {r["id"]: r for r in races}
+
+          preds = db.table("predictions").select("race_id,decision,pick,confidence,reason") \
+              .in_("decision", ["buy","candidate"]).execute().data
+
+          buy_list = []
+          for p in preds:
+              r = race_map.get(p["race_id"])
+              if not r:
+                  continue
+              reason = p.get("reason") or ""
+              if "[展示未取得]" in reason or "朝スキャン暫定" in reason:
+                  continue
+              # 締切時刻をJSTに変換
+              close_str = r["close_time"]
+              try:
+                  close_dt = datetime.fromisoformat(close_str)
+                  if close_dt.tzinfo is None:
+                      close_dt = close_dt.replace(tzinfo=timezone.utc)
+                  close_jst = close_dt.astimezone(JST).strftime("%H:%M")
+              except Exception:
+                  close_jst = "?"
+              buy_list.append((p["decision"], r["stadium"], r["race_no"], close_jst, p["pick"], p["confidence"]))
+
+          if not buy_list:
+              print("通知対象なし")
+              sys.exit(0)
+
+          import urllib.request, json
+          topic = os.environ["NTFY_TOPIC"]
+          for decision, stadium, race_no, close_jst, pick, conf in buy_list:
+              label = "🎯 BUY" if decision == "buy" else "📌 検討"
+              msg = f"{label} {stadium} {race_no}R｜締切{close_jst}｜{pick}｜{conf:.0f}点"
+              req = urllib.request.Request(
+                  f"https://ntfy.sh/{topic}",
+                  data=msg.encode(),
+                  headers={"Title": "ボートレース予想", "Tags": "boat,moneybag"},
+              )
+              urllib.request.urlopen(req)
+              print(f"通知送信: {msg}")
+          PYEOF
