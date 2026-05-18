@@ -393,7 +393,9 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
     # ── スコア計算 & ペイロード組み立て ──────────────────────────
     all_entries_payload: list[dict] = []
     all_predictions_payload: list[dict] = []
-    race_ids_to_finalize: list[str] = []
+    race_ids_processed: list[str] = []   # entries 取得成功した全レース
+    ex_ok_set: set[str]  = set()         # 展示データ取得済みの race_id
+    close_time_map = {r["id"]: r["close_time"] for r in races}
     counts = {"buy": 0, "candidate": 0, "watch": 0, "skip": 0}
     ex_ok_count = 0
 
@@ -404,6 +406,7 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
         ex_ok = any(e.exhibition_time is not None for e in entries)
         if ex_ok:
             ex_ok_count += 1
+            ex_ok_set.add(race_id)
 
         scores = score_entries(entries, condition)
         score_map = {s.lane: s.total for s in scores}
@@ -463,7 +466,7 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
             "best_ev":        pred["best_ev"],
             "kelly_fraction": pred.get("kelly_fraction"),
         })
-        race_ids_to_finalize.append(race_id)
+        race_ids_processed.append(race_id)
 
         # カウント (watch は is_watch フラグで判別)
         if pred["decision"] == "buy":
@@ -483,6 +486,32 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
                     pred["confidence"], pred["gap"],
                     "✓展示" if ex_ok else "△展示未取得")
 
+    # ── finalize 判定: 展示取得済み OR 締切15分以内のみ final にする ──
+    # 展示未取得 かつ 15分超え → scheduled のまま → 次回スキャンで再試行
+    now_fin = datetime.now(timezone.utc)
+    race_ids_to_finalize: list[str] = []
+    retry_count = 0
+    for race_id in race_ids_processed:
+        if race_id in ex_ok_set:
+            race_ids_to_finalize.append(race_id)
+        else:
+            close_str = close_time_map.get(race_id, "")
+            mins_left = 0.0
+            if close_str:
+                try:
+                    close_dt = datetime.fromisoformat(close_str)
+                    if close_dt.tzinfo is None:
+                        close_dt = close_dt.replace(tzinfo=timezone.utc)
+                    mins_left = (close_dt - now_fin).total_seconds() / 60
+                except Exception:
+                    pass
+            if mins_left <= 15:
+                race_ids_to_finalize.append(race_id)
+                logger.info("展示未取得 締切%.0f分前 → final確定", mins_left)
+            else:
+                retry_count += 1
+                logger.info("展示未取得 締切%.0f分前 → scheduled維持・次回再スキャン", mins_left)
+
     # ── 一括保存 ─────────────────────────────────────────────────
     t0 = time.monotonic()
     if all_entries_payload:
@@ -494,10 +523,10 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
     t_save = time.monotonic() - t0
 
     total_elapsed = time.monotonic() - scan_start
-    processed = len(race_ids_to_finalize)
+    processed = len(race_ids_processed)
     logger.info("=== Pre-Race Scan 完了 ===")
-    logger.info("今日の全R: %d / 窓内対象: %d / 処理成功: %d",
-                today_total, len(races), processed)
+    logger.info("今日の全R: %d / 窓内対象: %d / 処理成功: %d (final確定: %d / 再試行待ち: %d)",
+                today_total, len(races), processed, len(race_ids_to_finalize), retry_count)
     logger.info("展示取得成功: %d / 失敗(races数-処理数): %d",
                 ex_ok_count, len(races) - processed)
     logger.info("buy: %d / candidate: %d / watch: %d / skip: %d",
