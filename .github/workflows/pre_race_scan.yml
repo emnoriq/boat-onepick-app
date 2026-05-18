@@ -104,7 +104,7 @@ jobs:
           race_map = {r["id"]: r for r in races}
 
           preds = db.table("predictions").select("race_id,decision,pick,confidence,reason") \
-              .in_("decision", ["buy","candidate"]).execute().data
+              .eq("decision", "buy").execute().data
 
           buy_list = []
           for p in preds:
@@ -132,7 +132,7 @@ jobs:
           import urllib.request, json
           topic = os.environ["NTFY_TOPIC"]
           for decision, stadium, race_no, close_jst, pick, conf in buy_list:
-              label = "🎯 BUY" if decision == "buy" else "📌 検討"
+              label = "🎯 BUY"
               msg = f"{label} {stadium} {race_no}R｜締切{close_jst}｜{pick}｜{conf:.0f}点"
               req = urllib.request.Request(
                   f"https://ntfy.sh/{topic}",
