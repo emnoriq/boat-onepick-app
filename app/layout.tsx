@@ -5,6 +5,11 @@ import BottomNav from "@/components/BottomNav";
 export const metadata: Metadata = {
   title: "三連複1点 | ボートレース予想",
   description: "的中率重視・三連複1点特化のボートレース予想アプリ",
+  appleWebApp: {
+    capable: true,
+    title: "三連複1点",
+    statusBarStyle: "black-translucent",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
