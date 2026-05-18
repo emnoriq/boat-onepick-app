@@ -1,6 +1,20 @@
 import type { Metadata } from "next";
+import { Noto_Sans_JP, Inter } from "next/font/google";
 import "./globals.css";
 import BottomNav from "@/components/BottomNav";
+
+const noto = Noto_Sans_JP({
+  subsets: ["latin"],
+  weight: ["400", "500", "700", "900"],
+  variable: "--font-noto",
+  display: "swap",
+});
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "三連複1点 | ボートレース予想",
@@ -15,7 +29,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ja">
-      <body style={{ backgroundColor: "#FFF5F0" }} className="min-h-screen pb-20">
+      <body style={{ backgroundColor: "#FFF5F0" }} className={`${noto.variable} ${inter.variable} font-sans min-h-screen pb-20`}>
         {/* ── トップバー（ロゴのみ） ───────────────── */}
         <header className="bg-white/80 backdrop-blur-sm border-b border-orange-100 px-4 py-3 sticky top-0 z-10">
           <div className="max-w-lg mx-auto flex items-center justify-between">

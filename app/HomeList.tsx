@@ -27,13 +27,13 @@ export default function HomeList({ buyRaces, candRaces, pending, skipRaces }: Pr
       {(hasBets || pending.length > 0) && (
         <div className="flex gap-2 mb-4">
           {[
-            { key: "rank" as const, label: "📊 判定順" },
-            { key: "time" as const, label: "🕐 時間順" },
+            { key: "rank" as const, label: "判定順" },
+            { key: "time" as const, label: "時間順" },
           ].map(t => (
             <button
               key={t.key}
               onClick={() => setView(t.key)}
-              className={`flex-1 py-2.5 rounded-2xl text-sm font-bold transition-all ${
+              className={`flex-1 py-2.5 rounded-xl text-sm font-bold tracking-wide transition-all ${
                 view === t.key
                   ? "text-white shadow-sm"
                   : "bg-white text-gray-400 hover:text-gray-600"

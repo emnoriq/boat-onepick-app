@@ -6,10 +6,17 @@
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "palt" 1;
+    letter-spacing: 0.01em;
   }
   body {
     background-color: #FFF5F0;
-    color: #2d2d2d;
+    color: #1a1a1a;
+  }
+  /* 数字はInterを優先 */
+  .tabular-nums {
+    font-family: var(--font-inter), var(--font-noto), sans-serif;
+    font-feature-settings: "tnum" 1;
   }
 }
 

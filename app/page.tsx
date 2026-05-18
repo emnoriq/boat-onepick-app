@@ -36,8 +36,8 @@ export default async function HomePage() {
         className="rounded-3xl p-6 mb-5 text-white shadow-lg"
         style={{ background: "linear-gradient(135deg, #FF6B6B 0%, #FF8E53 50%, #FFBE0B 100%)" }}
       >
-        <p className="text-white/70 text-xs font-medium mb-1">{today}</p>
-        <h1 className="text-3xl font-black mb-4 tracking-tight drop-shadow-sm">
+        <p className="text-white/60 text-xs font-medium mb-1 tracking-widest uppercase">{today}</p>
+        <h1 className="text-2xl font-black mb-4 tracking-tight">
           今日の投票リスト
         </h1>
 

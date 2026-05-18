@@ -5,7 +5,14 @@ const config: Config = {
     "./app/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}",
   ],
-  theme: { extend: {} },
+  theme: {
+    extend: {
+      fontFamily: {
+        sans: ["var(--font-noto)", "var(--font-inter)", "ui-sans-serif", "sans-serif"],
+        mono: ["var(--font-inter)", "ui-monospace", "monospace"],
+      },
+    },
+  },
   plugins: [],
 };
 
