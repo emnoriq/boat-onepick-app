@@ -106,6 +106,7 @@ jobs:
           preds = db.table("predictions").select("race_id,decision,pick,confidence,reason") \
               .eq("decision", "buy").execute().data
 
+          now = datetime.now(timezone.utc)
           buy_list = []
           for p in preds:
               r = race_map.get(p["race_id"])
@@ -120,10 +121,13 @@ jobs:
                   close_dt = datetime.fromisoformat(close_str)
                   if close_dt.tzinfo is None:
                       close_dt = close_dt.replace(tzinfo=timezone.utc)
+                  # 締切済みのレースは通知しない（スキャン直後の1回だけ通知するため）
+                  if close_dt <= now:
+                      continue
                   close_jst = close_dt.astimezone(JST).strftime("%H:%M")
               except Exception:
-                  close_jst = "?"
-              buy_list.append((p["decision"], r["stadium"], r["race_no"], close_jst, p["pick"], p["confidence"]))
+                  continue
+              buy_list.append((r["stadium"], r["race_no"], close_jst, p["pick"], p["confidence"]))
 
           if not buy_list:
               print("通知対象なし")
@@ -131,9 +135,8 @@ jobs:
 
           import urllib.request, urllib.parse, json
           topic = os.environ["NTFY_TOPIC"]
-          for decision, stadium, race_no, close_jst, pick, conf in buy_list:
-              label = "BUY"
-              msg = f"{label} {stadium} {race_no}R | {close_jst}締切 | {pick} | {conf:.0f}pt"
+          for stadium, race_no, close_jst, pick, conf in buy_list:
+              msg = f"BUY {stadium} {race_no}R | {close_jst}締切 | {pick} | {conf:.0f}pt"
               # HTTPヘッダーはASCIIのみ。日本語はURLエンコードが必要
               title = urllib.parse.quote("ボートレース BUY")
               req = urllib.request.Request(
