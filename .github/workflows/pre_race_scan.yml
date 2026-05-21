@@ -133,18 +133,16 @@ jobs:
               print("通知対象なし")
               sys.exit(0)
 
-          import urllib.request, urllib.parse, json
+          import urllib.request, json
           topic = os.environ["NTFY_TOPIC"]
           for stadium, race_no, close_jst, pick, conf in buy_list:
-              msg = f"BUY {stadium} {race_no}R | {close_jst}締切 | {pick} | {conf:.0f}pt"
-              # HTTPヘッダーはASCIIのみ。日本語はURLエンコードが必要
-              title = urllib.parse.quote("ボートレース BUY")
+              msg = f"🎯 {stadium} {race_no}R\n締切 {close_jst} | {pick} | {conf:.0f}pt"
               req = urllib.request.Request(
                   f"https://ntfy.sh/{topic}",
                   data=msg.encode("utf-8"),
                   headers={
-                      "Title": title,
-                      "Tags": "boat",
+                      "Title": "BUY",
+                      "Tags": "white_check_mark",
                       "Content-Type": "text/plain; charset=utf-8",
                   },
               )
