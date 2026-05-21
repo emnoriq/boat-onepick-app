@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { unstable_cache } from "next/cache";
 
 function db() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -67,7 +68,7 @@ export type RaceWithPrediction = Race & {
   results: RaceResult | null;
 };
 
-export async function getTodayPredictions(date: string): Promise<RaceWithPrediction[]> {
+async function _getTodayPredictions(date: string): Promise<RaceWithPrediction[]> {
   const { data, error } = await db()
     .from("races")
     .select(`
@@ -81,6 +82,11 @@ export async function getTodayPredictions(date: string): Promise<RaceWithPredict
   if (error) throw error;
   return (data ?? []) as RaceWithPrediction[];
 }
+export const getTodayPredictions = unstable_cache(
+  _getTodayPredictions,
+  ["today-predictions"],
+  { revalidate: 30 }
+);
 
 export async function getRaceDetail(raceId: string): Promise<{
   race: Race;
@@ -199,7 +205,7 @@ export async function getDebugPredictions(date: string): Promise<DebugRow[]> {
   return rows;
 }
 
-export async function getStats() {
+async function _getStats() {
   const client = db();
 
   // predictions + results を JOIN して全件取得（!inner で予想ありのレースのみ）
@@ -367,7 +373,7 @@ export type OpsData = {
   lastUpdatedAt: string | null;
 };
 
-export async function getOpsData(date: string): Promise<OpsData> {
+async function _getOpsData(date: string): Promise<OpsData> {
   const client = db();
 
   // races + 埋め込みで predictions / results を一括取得
@@ -601,7 +607,7 @@ export type ScheduleSummary = {
  * 今日の全レース + predictions + results を一括取得して ScheduleRow[] を返す。
  * 未評価レース (predictions なし) も含む。
  */
-export async function getScheduleData(date: string): Promise<{
+async function _getScheduleData(date: string): Promise<{
   rows: ScheduleRow[];
   summary: ScheduleSummary;
 }> {
@@ -666,3 +672,22 @@ export async function getScheduleData(date: string): Promise<{
 
   return { rows, summary };
 }
+
+// ── キャッシュ付きエクスポート ──────────────────────────────────────────
+export const getStats = unstable_cache(
+  _getStats,
+  ["stats"],
+  { revalidate: 300 } // 5分キャッシュ（統計は頻繁に変わらない）
+);
+
+export const getOpsData = unstable_cache(
+  _getOpsData,
+  ["ops-data"],
+  { revalidate: 30 }
+);
+
+export const getScheduleData = unstable_cache(
+  _getScheduleData,
+  ["schedule-data"],
+  { revalidate: 30 }
+);
