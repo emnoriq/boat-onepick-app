@@ -1,14 +1,14 @@
 name: Pre-Race Scan
 
 # UTC/JST 対応表 (JST = UTC+9)
-# 09:00 JST = 00:00 UTC  /  16:30 JST = 07:30 UTC
+# 08:00 JST = 23:00 UTC(前日)  /  22:45 JST = 13:45 UTC
 
 on:
   schedule:
-    # 08:00〜08:30 JST = UTC 前日 23:00〜23:30 — 30分おき
-    - cron: "0,30 23 * * *"
-    # 09:00〜22:30 JST = UTC 00:00〜13:30 — 30分おき
-    - cron: "0,30 0-13 * * *"
+    # 08:00〜08:45 JST = UTC 前日 23:00〜23:45 — 15分おき
+    - cron: "0,15,30,45 23 * * *"
+    # 09:00〜22:45 JST = UTC 00:00〜13:45 — 15分おき
+    - cron: "0,15,30,45 0-13 * * *"
   workflow_dispatch:
     inputs:
       stadium:
