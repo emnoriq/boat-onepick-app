@@ -240,7 +240,7 @@ async function _getStats() {
       gap:          pred.gap ?? null,
       hit,
       payout:       res?.payout || 0,
-      hasExhibition: !(pred.reason || "").includes("[展示未取得]"),
+      hasExhibition: hasExhibitionData(pred.reason || ""),
       ev:    pred.best_ev    !== undefined ? pred.best_ev    : null,
       kelly: pred.kelly_fraction !== undefined ? pred.kelly_fraction : null,
     });
@@ -448,14 +448,6 @@ async function _getOpsData(date: string): Promise<OpsData> {
       // 展示済み判定 (新旧両方のマーカーに対応)
       if (hasExhibitionData(pred.reason)) exhibitionCount++;
 
-      if (pred.is_hit !== null && pred.is_hit !== undefined) {
-        verifiedTotal++;
-        if (pred.is_hit) hitCount++;
-        // 投資対象 (buy + candidate) のみカウント
-        if (pred.decision === "buy" || pred.decision === "candidate") {
-          betVerifiedCount++;
-        }
-      }
     }
 
     const res = race.results as any | null;
@@ -466,6 +458,23 @@ async function _getOpsData(date: string): Promise<OpsData> {
       if (res.prediction_hit && res.payout &&
           (predDec === "buy" || predDec === "candidate")) {
         payoutTotal += res.payout;
+      }
+    }
+
+    if (pred) {
+      // 的中確定の判定: results.prediction_hit 優先、なければ predictions.is_hit
+      const hitValue: boolean | null =
+        (res !== null && res !== undefined && res.prediction_hit !== null && res.prediction_hit !== undefined)
+          ? Boolean(res.prediction_hit)
+          : (pred.is_hit !== null && pred.is_hit !== undefined ? Boolean(pred.is_hit) : null);
+
+      if (hitValue !== null) {
+        verifiedTotal++;
+        if (hitValue) hitCount++;
+        // 投資対象 (buy + candidate) のみカウント
+        if (pred.decision === "buy" || pred.decision === "candidate") {
+          betVerifiedCount++;
+        }
       }
     }
   }
