@@ -80,7 +80,13 @@ async function _getTodayPredictions(date: string): Promise<RaceWithPrediction[]>
     .order("close_time", { ascending: true });
 
   if (error) throw error;
-  return (data ?? []) as RaceWithPrediction[];
+  // Supabase は unique FK があれば単一オブジェクトを返すが、
+  // バージョンや設定によっては配列になる場合もあるため正規化する
+  return (data ?? []).map((r: any) => ({
+    ...r,
+    predictions: Array.isArray(r.predictions) ? (r.predictions[0] ?? null) : (r.predictions ?? null),
+    results:     Array.isArray(r.results)     ? (r.results[0]     ?? null) : (r.results     ?? null),
+  })) as RaceWithPrediction[];
 }
 export const getTodayPredictions = unstable_cache(
   _getTodayPredictions,
@@ -178,10 +184,12 @@ export async function getDebugPredictions(date: string): Promise<DebugRow[]> {
 
   const rows: DebugRow[] = [];
   for (const race of (data ?? []) as any[]) {
-    const pred = race.predictions as Prediction | null;
+    const predRaw = race.predictions;
+    const pred = (Array.isArray(predRaw) ? (predRaw[0] ?? null) : (predRaw ?? null)) as Prediction | null;
     if (!pred) continue;
     const reasonText: string = pred.reason ?? "";
-    const result = race.results as RaceResult | null;
+    const resRaw = race.results;
+    const result: RaceResult | null = Array.isArray(resRaw) ? (resRaw[0] ?? null) : (resRaw ?? null);
     rows.push({
       race_id:         race.id,
       stadium:         race.stadium,
@@ -229,10 +237,16 @@ async function _getStats() {
 
   const rows: Row[] = [];
   for (const race of races as any[]) {
-    const pred = race.predictions;
-    const res  = race.results;
+    // Supabase は unique FK があれば単一オブジェクトを返すが、
+    // バージョンや設定によっては配列で返すことがある。両方に対応する。
+    const predRaw = race.predictions;
+    const pred: any = Array.isArray(predRaw) ? (predRaw[0] ?? null) : (predRaw ?? null);
+    const resRaw = race.results;
+    const res: any = Array.isArray(resRaw) ? (resRaw[0] ?? null) : (resRaw ?? null);
     if (!pred) continue;
-    const hit = res?.prediction_hit ?? pred.is_hit ?? null;
+    const hit = (res?.prediction_hit !== undefined && res?.prediction_hit !== null)
+      ? Boolean(res.prediction_hit)
+      : (pred.is_hit !== undefined && pred.is_hit !== null ? Boolean(pred.is_hit) : null);
     rows.push({
       confidence:   Number(pred.confidence) || 0,
       decision:     pred.decision || "skip",
@@ -425,7 +439,8 @@ async function _getOpsData(date: string): Promise<OpsData> {
       if (!lastUpdated || d > lastUpdated) lastUpdated = d;
     }
 
-    const pred = race.predictions as any | null;
+    const predRaw4 = race.predictions;
+    const pred = (Array.isArray(predRaw4) ? (predRaw4[0] ?? null) : (predRaw4 ?? null)) as any | null;
     if (pred) {
       predictionsTotal++;
       const conf = Number(pred.confidence);
@@ -450,7 +465,9 @@ async function _getOpsData(date: string): Promise<OpsData> {
 
     }
 
-    const res = race.results as any | null;
+    // Supabase の埋め込み JOIN は配列/単一オブジェクトのどちらでも来る場合がある
+    const resRaw2 = race.results;
+    const res = Array.isArray(resRaw2) ? (resRaw2[0] ?? null) : (resRaw2 ?? null);
     if (res) {
       resultsTotal++;
       // 払戻は buy + candidate が的中した場合のみ加算
@@ -464,7 +481,7 @@ async function _getOpsData(date: string): Promise<OpsData> {
     if (pred) {
       // 的中確定の判定: results.prediction_hit 優先、なければ predictions.is_hit
       const hitValue: boolean | null =
-        (res !== null && res !== undefined && res.prediction_hit !== null && res.prediction_hit !== undefined)
+        (res !== null && res.prediction_hit !== null && res.prediction_hit !== undefined)
           ? Boolean(res.prediction_hit)
           : (pred.is_hit !== null && pred.is_hit !== undefined ? Boolean(pred.is_hit) : null);
 
@@ -634,8 +651,10 @@ async function _getScheduleData(date: string): Promise<{
 
   const rows: ScheduleRow[] = [];
   for (const race of (data ?? []) as any[]) {
-    const pred   = race.predictions as any | null;
-    const result = race.results     as any | null;
+    const predRaw = race.predictions;
+    const pred: any = Array.isArray(predRaw) ? (predRaw[0] ?? null) : (predRaw ?? null);
+    const resRaw3   = race.results;
+    const result: any = Array.isArray(resRaw3) ? (resRaw3[0] ?? null) : (resRaw3 ?? null);
 
     const reasonText: string | null = pred?.reason ?? null;
     const conf: number | null       = pred ? Number(pred.confidence) : null;
