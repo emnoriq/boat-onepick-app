@@ -603,6 +603,26 @@ def decide(
             ev_pick  = max(ev_map, key=lambda k: ev_map[k])
             best_ev  = ev_map[ev_pick]
 
+            # ── 1号艇スコア1位の場合は1号艇を必ずpickに含める ────────────────
+            # 実績データより: 1号艇ナシpickは92%のケースで1号艇が3着内に来ており
+            # 的中率3% (ほぼランダム)。1号艇含むpickは24%的中。
+            # 1号艇がスコア最上位なのにEVモードが1号艇を除外するのは
+            # 「オッズが低い=人気=EV低い」と判断するためだが、
+            # 実際には1号艇が最も3着内に来やすいため修正が必要。
+            top_lane = scores[0].lane if scores else None
+            if top_lane == 1 and ev_pick and '1' not in ev_pick.split('-'):
+                # 1号艇を含む組み合わせの中から最大EVを選び直す
+                ev_with_top = {k: v for k, v in ev_map.items() if '1' in k.split('-')}
+                if ev_with_top:
+                    alt_pick = max(ev_with_top, key=lambda k: ev_with_top[k])
+                    alt_ev   = ev_with_top[alt_pick]
+                    reasons.append(
+                        f"[1号艇補正] スコア1位(1号艇)をpickに強制追加 "
+                        f"(元EV={best_ev:+.2f}→{alt_ev:+.2f} / {ev_pick}→{alt_pick})"
+                    )
+                    ev_pick = alt_pick
+                    best_ev = alt_ev
+
             # EVモードでは pick を最大EV組み合わせに差し替え
             pick = ev_pick
 
