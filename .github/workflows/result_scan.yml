@@ -95,3 +95,19 @@ jobs:
             # full モード: status=final のレースを全件処理
             python3 scraper/main.py result $DATE_ARG
           fi
+
+      - name: Revalidate app cache
+        if: always()
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
+        run: |
+          if [ -n "$APP_URL" ]; then
+            curl -s -X POST "${APP_URL}/api/revalidate" \
+              -H "Authorization: Bearer ${REVALIDATE_SECRET}" \
+              -H "Content-Type: application/json" \
+              -d '{"tags":["today-predictions","ops-data","schedule-data","stats"]}' \
+              || echo "Cache revalidation failed (non-fatal)"
+          else
+            echo "APP_URL not set, skipping revalidation"
+          fi

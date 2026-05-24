@@ -91,7 +91,7 @@ async function _getTodayPredictions(date: string): Promise<RaceWithPrediction[]>
 export const getTodayPredictions = unstable_cache(
   _getTodayPredictions,
   ["today-predictions"],
-  { revalidate: 30 }
+  { revalidate: 60, tags: ["today-predictions"] }
 );
 
 export async function getRaceDetail(raceId: string): Promise<{
@@ -705,17 +705,17 @@ async function _getScheduleData(date: string): Promise<{
 export const getStats = unstable_cache(
   _getStats,
   ["stats"],
-  { revalidate: 300 } // 5分キャッシュ（統計は頻繁に変わらない）
+  { revalidate: 300, tags: ["stats"] } // 5分キャッシュ（スキャン後は即時無効化）
 );
 
 export const getOpsData = unstable_cache(
   _getOpsData,
   ["ops-data"],
-  { revalidate: 30 }
+  { revalidate: 60, tags: ["ops-data"] }
 );
 
 export const getScheduleData = unstable_cache(
   _getScheduleData,
   ["schedule-data"],
-  { revalidate: 30 }
+  { revalidate: 60, tags: ["schedule-data"] }
 );
