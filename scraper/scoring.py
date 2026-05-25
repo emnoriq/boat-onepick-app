@@ -161,13 +161,17 @@ def _win_rate_score(rate: float) -> float:
 
 def _motor_score(rate: float, race_avg: float = 40.0) -> float:
     """
-    モーター2連対率を0〜15点にマッピング（艦隊平均との相対評価）
+    モーター2連対率を0〜8.4点にマッピング（艦隊平均との相対評価）
 
-    艦隊平均 = 7.5点 (中央値)。
-    平均より5%高い → +1.5点 / 平均より5%低い → -1.5点。
-    これにより全艇が同レベルの良モーターでも相対差を正しく反映する。
+    重み最適化結果 (2199レース): モータースコア×0.56が最適
+    → 実効最大値 15pt → 8.4pt に削減
+    理由: モーター率は整備・運などランダム要因が大きく、過大評価すると
+          選手力・枠の優位性を打ち消してしまう。
+
+    艦隊平均 = 4.2点 (中央値)。
+    平均より5%高い → +0.84点 / 平均より5%低い → -0.84点。
     """
-    return min(15.0, max(0.0, 7.5 + (rate - race_avg) * 0.3))
+    return min(8.4, max(0.0, 4.2 + (rate - race_avg) * 0.168))
 
 
 def _boat_rate_score(rate: float) -> float:
@@ -178,9 +182,11 @@ def _boat_rate_score(rate: float) -> float:
 def _lane_score(lane: int) -> float:
     """
     枠有利不利 (インほど有利)
-    1号艇: 8点、以降1.4点ずつ減少 (コース適性7点と合算で最大15点)
+    実績分析 (2199レース) に基づく3着内率:
+      1号艇82.1%, 2号艇57.0%, 3号艇52.7%, 4号艇45.7%, 5号艇35.3%, 6号艇27.3%
+    重み最適化結果: 枠スコア×1.35が最適 → 1号艇 10.8pt (旧8pt)
     """
-    return max(0.0, 8.0 - (lane - 1) * 1.4)
+    return max(0.0, 10.8 - (lane - 1) * 1.9)
 
 
 def _st_score(avg_st: float, f_count: int, l_count: int) -> float:
@@ -364,8 +370,30 @@ def score_entries(entries: list[EntryData], condition: RaceCondition) -> list[En
 
 
 def make_pick(scores: list[EntryScore]) -> str:
-    """上位3艇を三連複1点として返す (例: '1-2-4')"""
-    top3 = sorted(scores[:3], key=lambda s: s.lane)
+    """上位3艇を三連複1点として返す (例: '1-2-4')
+
+    実績分析 (2199レース):
+      1号艇の実際の3着内率 = 82.1%
+      スコアモデルが1号艇を除外した場合の的中率 = 5.8% (ほぼランダム)
+      1号艇を含む場合の的中率 = 20.3%
+    → 1号艇が上位3位に入っていない場合は強制包含 (+2.1%的中率改善)
+    """
+    if not scores:
+        return ""
+
+    top3_lanes = {s.lane for s in scores[:3]}
+
+    if 1 in top3_lanes:
+        # 1号艇が既にスコア上位3位以内 → そのまま
+        top3 = sorted(scores[:3], key=lambda s: s.lane)
+    else:
+        # 1号艇を強制包含: スコア1位・2位の2艇 + 1号艇
+        # (1号艇の3着内率82.1% — 除外すると的中率5.8%にまで落ちる)
+        others = [s for s in scores if s.lane != 1][:2]
+        combined = sorted([s for s in scores if s.lane == 1] + others,
+                          key=lambda s: s.lane)
+        top3 = combined
+
     return "-".join(str(s.lane) for s in top3)
 
 
