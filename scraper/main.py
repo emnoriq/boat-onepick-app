@@ -291,7 +291,10 @@ def morning_scan(today: date,
 
     for race_id, name, race_no, entry_objects in entry_results:
         scores = score_entries(entry_objects, default_condition)
-        pred   = decide(scores, default_condition)
+        lane1_e = next((e for e in entry_objects if e.lane == 1), None)
+        lane1_cls = lane1_e.racer_class if lane1_e else None
+        pred   = decide(scores, default_condition,
+                        stadium=name, lane1_class=lane1_cls)
         all_predictions_payload.append({
             "race_id":    race_id,
             "pick":       pred["pick"],
@@ -417,8 +420,10 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
 
         # 三連複オッズを全20組み合わせ取得してEV計算に使用
         odds = fetch_trifecta_box_odds(code, race_no, today)
+        lane1_cls = lane1_entry.racer_class if lane1_entry else None
         pred = decide(scores, condition, lane1_approach=lane1_approach,
-                      all_odds=odds if odds else None)
+                      all_odds=odds if odds else None,
+                      stadium=name, lane1_class=lane1_cls)
 
         # entries ペイロード (展示情報・チルト・コース別1着率込み)
         all_entries_payload.extend([{
@@ -589,8 +594,10 @@ def pre_race_scan_single(today: date, stadium_name: str, race_no: int) -> None:
         logger.info("三連複オッズ取得: %d組", len(odds))
     else:
         logger.info("三連複オッズ: 取得できませんでした")
+    lane1_cls = lane1_entry.racer_class if lane1_entry else None
     pred = decide(scores, condition, lane1_approach=lane1_approach,
-                  all_odds=odds if odds else None)
+                  all_odds=odds if odds else None,
+                  stadium=stadium_name, lane1_class=lane1_cls)
 
     reason_lines = pred["reason"]
     if not ex_ok:

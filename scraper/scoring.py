@@ -40,6 +40,10 @@
       1号艇スコア1位時のpick強制1号艇包含 (実績: 1号艇ナシ2% vs 含む26%的中)
       EV閾値 0.15→0.25、conf閾値 65→68
       1号艇がpickに含まれない場合はBUY不可(CANDIDATE止まり)
+  v9: 場別補正 + 1号艇クラス補正
+      低パフォーマンス場(びわこ10%/大村12%/津15%/戸田15%)の信頼度ペナルティ追加
+      1号艇クラスによる信頼度補正: A1×1.05 / B1×0.88 / B2×0.82
+      高精度場(下関32%/福岡29%/常滑28%) BUY条件をより通しやすく
 """
 
 import math
@@ -491,12 +495,45 @@ def calculate_combo_ev(
     return ev
 
 
+# ── 場別 的中率実績 (2199レース分析) ────────────────────────────────────────
+# 低パフォーマンス場: BUYを認めず信頼度にペナルティを課す
+_LOW_PERF_STADIUMS: dict[str, tuple[str, float]] = {
+    # 場名: (実績的中率表示, confidence乗数)
+    "びわこ": ("10.0%", 0.82),
+    "大村":   ("11.9%", 0.84),
+    "津":     ("14.6%", 0.87),
+    "戸田":   ("14.6%", 0.87),
+}
+
+# 高パフォーマンス場: BUY条件をやや緩和
+_HIGH_PERF_STADIUMS: dict[str, tuple[str, float]] = {
+    # 場名: (実績的中率表示, confidence乗数)
+    "下関":   ("32.3%", 1.06),
+    "福岡":   ("29.2%", 1.04),
+    "常滑":   ("28.4%", 1.03),
+    "住之江": ("25.4%", 1.02),
+}
+
+# 1号艇クラス別 的中率実績 (2199レース)
+_LANE1_CLASS_MUL: dict[str, float] = {
+    "A1": 1.05,   # 22.2% 的中 → 全体+3.6%
+    "A2": 1.00,   # 中間 (データ未収集、中立扱い)
+    "B1": 0.88,   # 14.3% 的中 → 全体-4.3%
+    "B2": 0.82,   # B1 より更に低い見込み
+}
+_LANE1_CLASS_HITRATE: dict[str, str] = {
+    "A1": "22.2%", "B1": "14.3%", "B2": "~12%",
+}
+
+
 def decide(
     scores: list[EntryScore],
     condition: RaceCondition,
     pick_payout: Optional[int] = None,      # 後方互換（all_odds がない場合のフィルタ用）
     lane1_approach: Optional[int] = None,
     all_odds: Optional[dict[str, int]] = None,  # 全20組み合わせのオッズ（EVモード）
+    stadium: Optional[str] = None,          # 場名（場別補正に使用）
+    lane1_class: Optional[str] = None,      # 1号艇の級別（クラス補正に使用）
 ) -> dict:
     """
     買い / 候補 / ウォッチ / 見送り 判定
@@ -589,13 +626,46 @@ def decide(
 
     confidence = min(100.0, confidence * lane1_mul)
 
+    # ── 場別補正 ──────────────────────────────────────────────────────────────
+    stadium_note: Optional[str] = None
+    if stadium:
+        if stadium in _LOW_PERF_STADIUMS:
+            hit_pct, mul = _LOW_PERF_STADIUMS[stadium]
+            confidence = min(100.0, confidence * mul)
+            stadium_note = (
+                f"⚠️ {stadium}は低パフォーマンス場(的中率{hit_pct}) "
+                f"— 信頼度×{mul:.2f} / BUY不可・CANDIDATE止まり"
+            )
+            reasons.append(stadium_note)
+        elif stadium in _HIGH_PERF_STADIUMS:
+            hit_pct, mul = _HIGH_PERF_STADIUMS[stadium]
+            confidence = min(100.0, confidence * mul)
+            reasons.append(
+                f"✅ {stadium}は高パフォーマンス場(的中率{hit_pct}) "
+                f"— 信頼度×{mul:.2f}"
+            )
+
+    # ── 1号艇クラス補正 ───────────────────────────────────────────────────────
+    if lane1_class:
+        cls = lane1_class.upper()
+        cls_mul = _LANE1_CLASS_MUL.get(cls, 1.00)
+        if cls_mul != 1.00:
+            hit_pct = _LANE1_CLASS_HITRATE.get(cls, "")
+            confidence = min(100.0, confidence * cls_mul)
+            reasons.append(
+                f"1号艇{lane1_class}級"
+                f"{f'(的中率{hit_pct})' if hit_pct else ''}"
+                f" — 信頼度×{cls_mul:.2f}"
+            )
+
     forced_skip = wind_rough or wave_rough or approach_unstable
     is_watch    = False
 
     lane1_label = ["1位", "2位", "3位", "4位以下"][min(lane1_rank, 3)] if lane1_rank >= 0 else "不明"
     approach_note = f" (コース{lane1_approach}進入)" if lane1_approach else ""
 
-    if not forced_skip and confidence >= 70 and gap >= 10:
+    is_low_perf_stadium = stadium is not None and stadium in _LOW_PERF_STADIUMS
+    if not forced_skip and confidence >= 70 and gap >= 10 and not is_low_perf_stadium:
         decision = "buy"
         rank = "S"
         reasons.append(f"上位3艇のスコア差が明確 (gap={gap:.1f} / 1号艇{lane1_label}{approach_note})")
@@ -662,7 +732,8 @@ def decide(
             # BUY条件: EV>0.25 かつ conf>=68 かつ 1号艇がpickに含まれること
             # 実績: 1号艇ナシpickは2%的中、1号艇含むpickは26%的中
             has_lane1_in_pick = ev_pick and '1' in ev_pick.split('-')
-            if best_ev > 0.25 and confidence >= 68 and has_lane1_in_pick:
+            is_low_perf_stadium = stadium is not None and stadium in _LOW_PERF_STADIUMS
+            if best_ev > 0.25 and confidence >= 68 and has_lane1_in_pick and not is_low_perf_stadium:
                 decision = "buy"
                 rank     = "S"
                 reasons.append(
