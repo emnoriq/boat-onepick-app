@@ -486,8 +486,11 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
                     pred["confidence"], pred["gap"],
                     "✓展示" if ex_ok else "△展示未取得")
 
-    # ── finalize 判定: 展示取得済み OR 締切15分以内のみ final にする ──
-    # 展示未取得 かつ 15分超え → scheduled のまま → 次回スキャンで再試行
+    # ── finalize 判定 ─────────────────────────────────────────────
+    # 展示データ公開タイミングの実態:
+    #   展示航走は締切 約30〜40分前に実施、公開は締切 約15〜20分前
+    #   → 「締切15分以内=諦め」では公開直後にfinalizeしてデータを取り逃がす
+    # 修正: 展示未取得は「締切5分以内」まで再試行を継続
     now_fin = datetime.now(timezone.utc)
     race_ids_to_finalize: list[str] = []
     retry_count = 0
@@ -505,10 +508,12 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
                     mins_left = (close_dt - now_fin).total_seconds() / 60
                 except Exception:
                     pass
-            if mins_left <= 15:
+            if mins_left <= 5:
+                # 締切5分以内 → 展示なしで確定（これ以上待てない）
                 race_ids_to_finalize.append(race_id)
-                logger.info("展示未取得 締切%.0f分前 → final確定", mins_left)
+                logger.info("展示未取得 締切%.0f分前 → final確定(タイムアウト)", mins_left)
             else:
+                # 締切5分超え → scheduled維持・次回スキャンで展示を再取得
                 retry_count += 1
                 logger.info("展示未取得 締切%.0f分前 → scheduled維持・次回再スキャン", mins_left)
 
