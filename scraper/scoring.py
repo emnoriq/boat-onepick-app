@@ -36,6 +36,10 @@
       全国3連対率・当地3連対率を三連複ベット向け指標として採用
       コース別1着率（c1_win_rate〜c6_win_rate）をスコアに反映
       朝スコア: 枠10→8pt / コース適性7pt新設 / player内訳変更
+  v8: BUY条件厳格化
+      1号艇スコア1位時のpick強制1号艇包含 (実績: 1号艇ナシ2% vs 含む26%的中)
+      EV閾値 0.15→0.25、conf閾値 65→68
+      1号艇がpickに含まれない場合はBUY不可(CANDIDATE止まり)
 """
 
 import math
@@ -627,13 +631,30 @@ def decide(
             pick = ev_pick
 
             # EV ベースの判定（confidence もあわせて参照）
-            if best_ev > 0.15 and confidence >= 65:
+            # BUY条件: EV>0.25 かつ conf>=68 かつ 1号艇がpickに含まれること
+            # 実績: 1号艇ナシpickは2%的中、1号艇含むpickは26%的中
+            has_lane1_in_pick = ev_pick and '1' in ev_pick.split('-')
+            if best_ev > 0.25 and confidence >= 68 and has_lane1_in_pick:
                 decision = "buy"
                 rank     = "S"
                 reasons.append(
                     f"EV={best_ev:+.2f} (期待値+{best_ev*100:.0f}%) / conf={round(confidence,1)} "
                     f"/ gap={gap:.1f} — 市場が過小評価している組み合わせ"
                 )
+            elif best_ev > 0.15 and confidence >= 65:
+                # EV プラスだが1号艇なし or 閾値未満 → CANDIDATE止まり
+                decision = "candidate"
+                rank     = "A"
+                if not has_lane1_in_pick:
+                    reasons.append(
+                        f"EV={best_ev:+.2f} / conf={round(confidence,1)} "
+                        f"/ gap={gap:.1f} — 1号艇未包含のためcandidate止まり"
+                    )
+                else:
+                    reasons.append(
+                        f"EV={best_ev:+.2f} (EV or conf 閾値未達) / conf={round(confidence,1)} "
+                        f"/ gap={gap:.1f}"
+                    )
             elif best_ev > 0.0:
                 decision = "candidate"
                 rank     = "A"
