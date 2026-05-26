@@ -90,6 +90,10 @@ _THRESHOLDS_DEFAULT: dict = {
     "score_buy_gap":   10.0,   # スコアモード BUY gap 閾値
     "score_cand_conf": 62.0,   # スコアモード CANDIDATE confidence 閾値
     "score_cand_gap":   7.0,   # スコアモード CANDIDATE gap 閾値
+    # レース番号フィルター
+    # 実績分析 (118件): 2R/3R/12R は conf≥68 でも的中率 0% → BUY不可
+    # 理由: 早いレース(2R/3R)は選手データ少・予想精度低。最終R(12R)は消化試合が多い
+    "skip_buy_race_nos": [2, 3, 12],
 }
 _THRESHOLDS = _load_json("thresholds.json", _THRESHOLDS_DEFAULT)
 
@@ -699,6 +703,7 @@ def decide(
     all_odds: Optional[dict[str, int]] = None,  # 全20組み合わせのオッズ（EVモード）
     stadium: Optional[str] = None,          # 場名（場別補正に使用）
     lane1_class: Optional[str] = None,      # 1号艇の級別（クラス補正に使用）
+    race_no: Optional[int] = None,          # レース番号（BUY除外レースのフィルタ用）
 ) -> dict:
     """
     買い / 候補 / ウォッチ / 見送り 判定
@@ -820,6 +825,17 @@ def decide(
     forced_skip = wind_rough or wave_rough or approach_unstable
     is_watch    = False
 
+    # ── レース番号フィルター (thresholds.json から動的ロード) ──────────────────
+    # 実績: 2R/3R/12R は conf≥68 でも的中率 0% → BUY不可・CANDIDATE止まり
+    # skip_buy_race_nos はチューニング結果に応じて tune_thresholds.py が更新可能
+    skip_buy_race_nos: list = _THRESHOLDS.get("skip_buy_race_nos", [2, 3, 12])
+    race_no_skip_buy = (race_no is not None and race_no in skip_buy_race_nos)
+    if race_no_skip_buy:
+        reasons.append(
+            f"⚠️ {race_no}Rは的中率低下レース "
+            f"(対象: {skip_buy_race_nos}) → BUY不可・CANDIDATE止まり"
+        )
+
     # BUY/CANDIDATE 閾値 (thresholds.json から動的ロード — tune_thresholds.py が毎週更新)
     # 実績分析 (2027件): conf≥68 → 的中率18.6% / ROI+8.1% ← 最良
     #   → score_buy_conf を 70→68、score_buy_gap を 10→5 に緩和
@@ -833,7 +849,7 @@ def decide(
     lane1_label = ["1位", "2位", "3位", "4位以下"][min(lane1_rank, 3)] if lane1_rank >= 0 else "不明"
     approach_note = f" (コース{lane1_approach}進入)" if lane1_approach else ""
 
-    if not forced_skip and confidence >= score_buy_conf and gap >= score_buy_gap and not low_perf:
+    if not forced_skip and confidence >= score_buy_conf and gap >= score_buy_gap and not low_perf and not race_no_skip_buy:
         decision = "buy"
         rank = "S"
         reasons.append(f"上位3艇のスコア差が明確 (gap={gap:.1f} / 1号艇{lane1_label}{approach_note})")
@@ -912,7 +928,7 @@ def decide(
             ev_buy_max = _th.get("ev_buy_max", 0.50)   # 上限 (デフォルト0.50)
             ev_is_contrarian = (best_ev > ev_buy_max)
 
-            if best_ev > ev_buy and best_ev <= ev_buy_max and confidence >= conf_buy and has_lane1_in_pick and not low_perf:
+            if best_ev > ev_buy and best_ev <= ev_buy_max and confidence >= conf_buy and has_lane1_in_pick and not low_perf and not race_no_skip_buy:
                 decision = "buy"
                 rank     = "S"
                 reasons.append(

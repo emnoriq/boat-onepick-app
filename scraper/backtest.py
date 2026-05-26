@@ -118,7 +118,7 @@ def _process_race(
         scores = score_entries(entries, condition)
         lane1_entry    = next((e for e in entries if e.lane == 1), None)
         lane1_approach = lane1_entry.approach_lane if lane1_entry else None
-        pred = decide(scores, condition, lane1_approach=lane1_approach)
+        pred = decide(scores, condition, lane1_approach=lane1_approach, race_no=race_no)
 
         res = fetch_result(code, race_no, target_date)
         hit = payout = popularity = trifecta = None

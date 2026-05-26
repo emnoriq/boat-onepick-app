@@ -300,7 +300,7 @@ def morning_scan(today: date,
         lane1_e = next((e for e in entry_objects if e.lane == 1), None)
         lane1_cls = lane1_e.racer_class if lane1_e else None
         pred   = decide(scores, default_condition,
-                        stadium=name, lane1_class=lane1_cls)
+                        stadium=name, lane1_class=lane1_cls, race_no=race_no)
         all_predictions_payload.append({
             "race_id":    race_id,
             "pick":       pred["pick"],
@@ -434,7 +434,7 @@ def pre_race_scan(today: date, window_minutes: int = 45,
         lane1_cls = lane1_entry.racer_class if lane1_entry else None
         pred = decide(scores, condition, lane1_approach=lane1_approach,
                       all_odds=odds if odds else None,
-                      stadium=name, lane1_class=lane1_cls)
+                      stadium=name, lane1_class=lane1_cls, race_no=race_no)
 
         # entries ペイロード (展示情報・チルト・コース別1着率込み)
         all_entries_payload.extend([{
@@ -608,7 +608,7 @@ def pre_race_scan_single(today: date, stadium_name: str, race_no: int) -> None:
     lane1_cls = lane1_entry.racer_class if lane1_entry else None
     pred = decide(scores, condition, lane1_approach=lane1_approach,
                   all_odds=odds if odds else None,
-                  stadium=stadium_name, lane1_class=lane1_cls)
+                  stadium=stadium_name, lane1_class=lane1_cls, race_no=race_no)
 
     reason_lines = pred["reason"]
     if not ex_ok:
