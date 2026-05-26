@@ -1,13 +1,13 @@
 {
-  "_comment": "朝スコア各成分の重み乗数 (1.0=変更なし)。weekly_optimize.yml が自動更新する。",
-  "w_player": 1.0,
-  "w_motor":  1.0,
-  "w_lane":   1.0,
-  "w_course": 1.0,
-  "w_st":     1.0,
-  "w_local":  1.0,
-  "updated_at":      "2026-05-25",
-  "train_hit_rate":  0.0,
-  "test_hit_rate":   0.0,
-  "baseline_hit_rate": 0.0
+  "_comment": "optimize_weights.py が自動生成。scoring.py の morning_score() で適用される。",
+  "updated_at": "2026-05-26 22:42 JST",
+  "train_hit_rate": 0.2176,
+  "baseline_hit_rate": 0.1883,
+  "test_hit_rate": 0.2176,
+  "w_player": 1.238515,
+  "w_motor": 1.644881,
+  "w_lane": 3.646346,
+  "w_course": 2.512082,
+  "w_st": 2.436158,
+  "w_local": 1.127072
 }
