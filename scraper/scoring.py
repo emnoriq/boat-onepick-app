@@ -821,11 +821,14 @@ def decide(
     is_watch    = False
 
     # BUY/CANDIDATE 閾値 (thresholds.json から動的ロード — tune_thresholds.py が毎週更新)
+    # 実績分析 (2027件): conf≥68 → 的中率18.6% / ROI+8.1% ← 最良
+    #   → score_buy_conf を 70→68、score_buy_gap を 10→5 に緩和
+    #   → EVフィルターより信頼度ベース判定の方が精度が高いことが判明
     _th = _THRESHOLDS
-    score_buy_conf  = _th.get("score_buy_conf",  70.0)
-    score_buy_gap   = _th.get("score_buy_gap",   10.0)
+    score_buy_conf  = _th.get("score_buy_conf",  68.0)
+    score_buy_gap   = _th.get("score_buy_gap",    5.0)
     score_cand_conf = _th.get("score_cand_conf", 62.0)
-    score_cand_gap  = _th.get("score_cand_gap",   7.0)
+    score_cand_gap  = _th.get("score_cand_gap",   5.0)
 
     lane1_label = ["1位", "2位", "3位", "4位以下"][min(lane1_rank, 3)] if lane1_rank >= 0 else "不明"
     approach_note = f" (コース{lane1_approach}進入)" if lane1_approach else ""
