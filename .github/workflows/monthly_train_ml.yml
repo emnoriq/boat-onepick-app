@@ -25,6 +25,8 @@ jobs:
   train-ml:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -84,13 +86,7 @@ jobs:
             JST=$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')
             # model_meta.json から AUC を取得して commit message に含める
             AUC=$(python3 -c "import json; d=json.load(open('scraper/model_meta.json')); print(f\"{d.get('cv_auc_mean',0):.3f}\")" 2>/dev/null || echo "N/A")
-            git commit -m "auto: 月次 ML モデル更新 ${JST} (AUC=${AUC})
-
-月次自動学習 (monthly_train_ml.yml):
-  - GradientBoostingClassifier + Isotonic Calibration
-  - CV AUC: ${AUC}
-
-Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+            git commit -m "$(printf 'auto: 月次 ML モデル更新 %s (AUC=%s)\n\nmonthly_train_ml.yml: GradientBoostingClassifier + Isotonic Calibration\n\nCo-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>' "$JST" "$AUC")"
             git push
             echo "✅ ML モデルをコミットしました (AUC=${AUC})"
           else

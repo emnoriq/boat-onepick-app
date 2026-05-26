@@ -28,6 +28,8 @@ jobs:
   optimize:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -83,13 +85,8 @@ jobs:
           if [ -n "$CHANGED" ]; then
             git add scraper/weights.json scraper/stadium_stats.json
             JST=$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')
-            git commit -m "auto: 週次パラメータ更新 ${JST}
-
-週次自動最適化 (weekly_optimize.yml):
-  - optimize_weights.py: 直近${{ github.event.inputs.days || '90' }}日データで重み再最適化
-  - update_stats.py: 場別・クラス別 的中率を DB から再集計
-
-Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+            DAYS_LABEL="${{ github.event.inputs.days || '90' }}"
+            git commit -m "$(printf 'auto: 週次パラメータ更新 %s\n\nweekly_optimize.yml: 直近%s日 optimize_weights + update_stats\n\nCo-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>' "$JST" "$DAYS_LABEL")"
             git push
             echo "✅ パラメータ更新をコミットしました"
           else
