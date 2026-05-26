@@ -45,6 +45,8 @@ THRESHOLDS_DEFAULT: dict = {
     "updated_at":       None,
     # EV モード閾値 (pre_race_scan でオッズが取得できた場合)
     "ev_buy":           0.25,   # EV > この値 かつ conf >= conf_buy → BUY
+    "ev_buy_max":       0.50,   # EV がこの値以上は逆選択リスク → CANDIDATE止まり
+                                # 実績: EV>0.5 → 的中率5.2%, EV 0.25-0.5 → 的中率30%
     "conf_buy":         68.0,   # confidence 閾値 (EVモード BUY)
     "ev_cand":          0.15,   # EV > この値 → CANDIDATE
     "conf_cand":        65.0,   # confidence 閾値 (EVモード CANDIDATE)
@@ -150,48 +152,56 @@ def grid_search(
     min_bets: int = 10,
 ) -> tuple[dict | None, list[dict]]:
     """
-    EV閾値 × confidence閾値 のグリッドサーチ。
+    EV下限閾値 × EV上限キャップ × confidence閾値 のグリッドサーチ。
 
-    各組み合わせで「そのしきい値でBUYにした場合のROI」を計算する。
+    実績: EV>0.5 → 的中率5.2% (逆選択), EV 0.25-0.5 → 的中率30.0% (有効)
+    → EV上限キャップ (ev_buy_max) を導入して高EV逆選択を排除する
+
     ROI = (払戻合計 - 投資額合計) / 投資額合計
-         = (hit_count * avg_payout - total_bets * 100) / (total_bets * 100)
 
     Returns:
         best_result (dict or None): ROI最大の閾値組み合わせ
         all_results (list[dict]):   全探索結果 (ROI降順)
     """
     # グリッド定義
-    ev_grid   = [round(x * 0.025, 3) for x in range(0, 21)]   # 0.000 〜 0.500
-    conf_grid = [round(55.0 + x * 2.5, 1) for x in range(13)] # 55.0 〜 85.0
+    ev_min_grid = [round(x * 0.025, 3) for x in range(0, 17)]    # 0.000 〜 0.400
+    ev_max_grid = [round(0.30 + x * 0.10, 2) for x in range(9)]  # 0.30 〜 1.10 (上限キャップ)
+    conf_grid   = [round(55.0 + x * 2.5, 1) for x in range(13)]  # 55.0 〜 85.0
 
     all_results: list[dict] = []
 
-    for ev_t in ev_grid:
-        for conf_t in conf_grid:
-            bets = [
-                (bool(p["is_hit"]), payout_map.get(p["race_id"], 0))
-                for p in preds
-                if (p.get("best_ev") is not None and p["best_ev"] >= ev_t
-                    and p.get("confidence") is not None and p["confidence"] >= conf_t)
-            ]
-            n = len(bets)
-            if n < min_bets:
+    for ev_min in ev_min_grid:
+        for ev_max in ev_max_grid:
+            if ev_max <= ev_min:
                 continue
+            for conf_t in conf_grid:
+                bets = [
+                    (bool(p["is_hit"]), payout_map.get(p["race_id"], 0))
+                    for p in preds
+                    if (p.get("best_ev") is not None
+                        and ev_min <= p["best_ev"] <= ev_max
+                        and p.get("confidence") is not None
+                        and p["confidence"] >= conf_t)
+                ]
+                n = len(bets)
+                if n < min_bets:
+                    continue
 
-            hit_count = sum(1 for hit, _ in bets if hit)
-            hit_rate  = hit_count / n
+                hit_count = sum(1 for hit, _ in bets if hit)
+                hit_rate  = hit_count / n
 
-            # ROI 計算 (¥100 ベット換算)
-            total_return = sum((pay if hit else 0) for hit, pay in bets)
-            roi = (total_return - n * 100) / (n * 100)
+                # ROI 計算 (¥100 ベット換算)
+                total_return = sum((pay if hit else 0) for hit, pay in bets)
+                roi = (total_return - n * 100) / (n * 100)
 
-            all_results.append({
-                "ev_t":     ev_t,
-                "conf_t":   conf_t,
-                "n":        n,
-                "hit_rate": round(hit_rate, 4),
-                "roi":      round(roi, 4),
-            })
+                all_results.append({
+                    "ev_t":     ev_min,
+                    "ev_max":   ev_max,
+                    "conf_t":   conf_t,
+                    "n":        n,
+                    "hit_rate": round(hit_rate, 4),
+                    "roi":      round(roi, 4),
+                })
 
     if not all_results:
         return None, []
@@ -242,14 +252,15 @@ def main() -> None:
     # ── 結果レポート ──────────────────────────────────────────────────────────
     top_n = all_results if args.verbose else all_results[:10]
     logger.info("=== グリッドサーチ結果 (上位%d) ===", len(top_n))
-    logger.info("%-7s %-6s  %5s  %7s  %8s", "EV≥", "conf≥", "件数", "的中率", "ROI")
+    logger.info("%-7s %-7s %-6s  %5s  %7s  %8s", "EV≥", "EV≤", "conf≥", "件数", "的中率", "ROI")
     for r in top_n:
-        logger.info("%.3f   %-6.1f  %5d  %6.1f%%  %+7.1f%%",
-                    r["ev_t"], r["conf_t"], r["n"],
+        logger.info("%.3f   %.2f   %-6.1f  %5d  %6.1f%%  %+7.1f%%",
+                    r["ev_t"], r.get("ev_max", 9.99), r["conf_t"], r["n"],
                     r["hit_rate"] * 100, r["roi"] * 100)
 
     logger.info("=== 最良閾値 ===")
-    logger.info("  ev_threshold  : %.3f", best["ev_t"])
+    logger.info("  ev_buy        : %.3f", best["ev_t"])
+    logger.info("  ev_buy_max    : %.2f",  best.get("ev_max", 0.50))
     logger.info("  conf_threshold: %.1f",  best["conf_t"])
     logger.info("  BET数         : %d",    best["n"])
     logger.info("  的中率        : %.1f%%", best["hit_rate"] * 100)
@@ -257,20 +268,19 @@ def main() -> None:
 
     # ── 現在の閾値との比較 ───────────────────────────────────────────────────
     current = _load_thresholds()
-    cur_ev   = current.get("ev_buy",   0.25)
-    cur_conf = current.get("conf_buy", 68.0)
+    cur_ev      = current.get("ev_buy",     0.25)
+    cur_ev_max  = current.get("ev_buy_max", 0.50)
+    cur_conf    = current.get("conf_buy",  68.0)
     logger.info("=== 現在の閾値 vs 最良閾値 ===")
-    logger.info("  ev_buy  : %.3f → %.3f (%s)",
-                cur_ev, best["ev_t"],
-                "変更あり" if abs(cur_ev - best["ev_t"]) > 0.001 else "変更なし")
-    logger.info("  conf_buy: %.1f → %.1f (%s)",
-                cur_conf, best["conf_t"],
-                "変更あり" if abs(cur_conf - best["conf_t"]) > 0.1 else "変更なし")
+    logger.info("  ev_buy     : %.3f → %.3f", cur_ev,     best["ev_t"])
+    logger.info("  ev_buy_max : %.2f  → %.2f",  cur_ev_max, best.get("ev_max", 0.50))
+    logger.info("  conf_buy   : %.1f → %.1f",   cur_conf,   best["conf_t"])
 
     if args.save:
         data = _load_thresholds()
         JST  = timezone(timedelta(hours=9))
         data["ev_buy"]     = best["ev_t"]
+        data["ev_buy_max"] = best.get("ev_max", 0.50)
         data["conf_buy"]   = best["conf_t"]
         data["updated_at"] = datetime.now(JST).strftime("%Y-%m-%d %H:%M JST")
         data["sample_n"]   = best["n"]

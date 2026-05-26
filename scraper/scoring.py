@@ -81,6 +81,8 @@ _STATS = _load_json("stadium_stats.json", _STATS_DEFAULT)
 # BUY判定閾値 (thresholds.json が tune_thresholds.py によって自動更新される)
 _THRESHOLDS_DEFAULT: dict = {
     "ev_buy":          0.25,   # EVモード BUY 閾値 (EV > X)
+    "ev_buy_max":      0.50,   # EVモード BUY 上限 (EV > X は逆選択リスク → CANDIDATE)
+                               # 実績: EV>0.5 → 的中率5.2%, EV 0.25-0.5 → 的中率30%
     "conf_buy":        68.0,   # EVモード BUY confidence 閾値
     "ev_cand":         0.15,   # EVモード CANDIDATE 閾値
     "conf_cand":       65.0,   # EVモード CANDIDATE confidence 閾値
@@ -900,12 +902,27 @@ def decide(
             conf_cand = _th.get("conf_cand", 65.0)
 
             has_lane1_in_pick = ev_pick and '1' in ev_pick.split('-')
-            if best_ev > ev_buy and confidence >= conf_buy and has_lane1_in_pick and not low_perf:
+
+            # ── EV上限キャップ: EV > 0.50 は市場が「ほぼ来ない」と判断した組み合わせ
+            # 実績: EV>0.5 → 的中率5.2% (59/3), EV 0.25-0.5 → 的中率30.0% (10/3)
+            # 高すぎるEVはモデルの確率推定が狂っているサイン → CANDIDATE止まり
+            ev_buy_max = _th.get("ev_buy_max", 0.50)   # 上限 (デフォルト0.50)
+            ev_is_contrarian = (best_ev > ev_buy_max)
+
+            if best_ev > ev_buy and best_ev <= ev_buy_max and confidence >= conf_buy and has_lane1_in_pick and not low_perf:
                 decision = "buy"
                 rank     = "S"
                 reasons.append(
                     f"EV={best_ev:+.2f} (期待値+{best_ev*100:.0f}%) / conf={round(confidence,1)} "
                     f"/ gap={gap:.1f} — 市場が過小評価している組み合わせ"
+                )
+            elif best_ev > ev_buy and ev_is_contrarian:
+                # EV上限超え → 市場と大きく乖離 = 逆選択リスク → CANDIDATEに降格
+                decision = "candidate"
+                rank     = "A"
+                reasons.append(
+                    f"EV={best_ev:+.2f} (EV上限{ev_buy_max:.2f}超 — 逆選択リスク) / conf={round(confidence,1)} "
+                    f"/ gap={gap:.1f} → CANDIDATE止まり"
                 )
             elif best_ev > ev_cand and confidence >= conf_cand:
                 # EV プラスだが1号艇なし or 閾値未満 → CANDIDATE止まり
