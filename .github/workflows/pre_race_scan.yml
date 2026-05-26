@@ -82,6 +82,48 @@ jobs:
             python3 scraper/main.py pre_race
           fi
 
+      - name: Exhibition data check
+        if: ${{ github.event.inputs.stadium == '' }}
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, sys
+          sys.path.insert(0, "scraper")
+          from db import get_client
+          from datetime import date, datetime, timezone, timedelta
+
+          db = get_client()
+          JST = timezone(timedelta(hours=9))
+          now_jst = datetime.now(JST)
+          today = now_jst.date().isoformat()
+
+          # 10:00 JST 以前はまだ展示が始まっていないのでスキップ
+          if now_jst.hour < 10:
+              print("展示チェックスキップ（10:00 JST 前）")
+              sys.exit(0)
+
+          races = db.table("races").select("id").eq("race_date", today).execute().data
+          if not races:
+              print("今日のレースなし")
+              sys.exit(0)
+
+          race_ids = [r["id"] for r in races]
+          entries = db.table("entries").select("id,exhibition_time") \
+              .in_("race_id", race_ids).execute().data
+
+          total = len(entries)
+          with_exh = sum(1 for e in entries if e.get("exhibition_time") is not None)
+          rate = with_exh / total if total else 0
+
+          print(f"今日の展示取得率: {rate*100:.1f}% ({with_exh}/{total})")
+
+          if rate == 0 and total >= 6 and now_jst.hour >= 12:
+              print("::warning::今日の展示データがゼロです。fetch_exhibition.py を確認してください。")
+          PYEOF
+
       - name: Revalidate app cache
         if: always()
         env:
