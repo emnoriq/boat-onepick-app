@@ -89,8 +89,20 @@ def _check_hit(pick: str, trifecta: str) -> bool:
     return set(pick.split("-")) == set(trifecta.split("-"))
 
 
-def _process_race(code: str, name: str, race_no: int, target_date: date) -> Optional[BtResult]:
-    """1レースの予想 + 結果を取得して BtResult を返す"""
+def _process_race(
+    code: str,
+    name: str,
+    race_no: int,
+    target_date: date,
+    require_exhibition: bool = False,
+) -> Optional[BtResult]:
+    """
+    1レースの予想 + 結果を取得して BtResult を返す。
+
+    require_exhibition=True の場合:
+      展示タイムが1艇も取得できなかったレースは None を返してスキップする。
+      これにより「直前情報あり」のレースのみを対象にしたバックテストが可能。
+    """
     try:
         entries = fetch_entries(code, race_no, target_date)
         if not entries:
@@ -98,6 +110,10 @@ def _process_race(code: str, name: str, race_no: int, target_date: date) -> Opti
 
         condition = fetch_exhibition(code, race_no, target_date, entries)
         has_ex = any(e.exhibition_time is not None for e in entries)
+
+        # --require-exhibition: 展示なしはスキップ
+        if require_exhibition and not has_ex:
+            return None
 
         scores = score_entries(entries, condition)
         lane1_entry    = next((e for e in entries if e.lane == 1), None)
@@ -132,7 +148,12 @@ def _process_race(code: str, name: str, race_no: int, target_date: date) -> Opti
         return None
 
 
-def _process_day(target_date: date, stadium_codes: list[str], workers: int) -> list[BtResult]:
+def _process_day(
+    target_date: date,
+    stadium_codes: list[str],
+    workers: int,
+    require_exhibition: bool = False,
+) -> list[BtResult]:
     """1日分を並列処理"""
     race_args: list[tuple] = []
     for code in stadium_codes:
@@ -141,7 +162,7 @@ def _process_day(target_date: date, stadium_codes: list[str], workers: int) -> l
             races = fetch_race_list(code, target_date)
             if races:
                 for r in races:
-                    race_args.append((code, name, r["race_no"], target_date))
+                    race_args.append((code, name, r["race_no"], target_date, require_exhibition))
         except Exception:
             pass
 
@@ -333,6 +354,8 @@ def main() -> None:
                         help="場コードをカンマ区切り 例: 08,12,22 (省略時: 全24場)")
     parser.add_argument("--interval", type=float, default=0.5,
                         help="HTTP リクエスト間スリープ秒 (デフォルト: 0.5 / 本番は 1.0〜2.0)")
+    parser.add_argument("--require-exhibition", action="store_true",
+                        help="展示タイムが取得できたレースのみを対象にする (本番 pre_race_scan 相当)")
     args = parser.parse_args()
 
     # バックテスト用に REQUEST_INTERVAL を一括設定
@@ -354,6 +377,8 @@ def main() -> None:
     logger.info("期間: %s 〜 %s (%d日)", start, end, (end - start).days + 1)
     logger.info("対象場: %d場 / 並列ワーカー: %d / interval: %.1fs",
                 len(stadium_codes), args.workers, args.interval)
+    if args.require_exhibition:
+        logger.info("展示データフィルタ: ON (展示タイムなしレースを除外)")
 
     all_results: list[BtResult] = []
     total_days = (end - start).days + 1
@@ -362,7 +387,8 @@ def main() -> None:
     while current <= end:
         day_num = (current - start).days + 1
         logger.info("[%d/%d] %s 処理中...", day_num, total_days, current)
-        day_res = _process_day(current, stadium_codes, args.workers)
+        day_res = _process_day(current, stadium_codes, args.workers,
+                               require_exhibition=args.require_exhibition)
         all_results.extend(day_res)
         confirmed = sum(1 for r in day_res if r.hit is not None)
         hits = sum(1 for r in day_res if r.hit)

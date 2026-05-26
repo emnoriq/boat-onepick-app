@@ -1,0 +1,15 @@
+{
+  "_comment": "tune_thresholds.py が自動生成。scoring.py の decide() で適用される。",
+  "updated_at": null,
+  "ev_buy": 0.25,
+  "conf_buy": 68.0,
+  "ev_cand": 0.15,
+  "conf_cand": 65.0,
+  "score_buy_conf": 70.0,
+  "score_buy_gap": 10.0,
+  "score_cand_conf": 62.0,
+  "score_cand_gap": 7.0,
+  "sample_n": null,
+  "hit_rate": null,
+  "roi": null
+}

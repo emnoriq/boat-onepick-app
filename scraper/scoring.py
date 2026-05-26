@@ -78,6 +78,19 @@ _WEIGHTS = _load_json("weights.json", _WEIGHTS_DEFAULT)
 _STATS_DEFAULT: dict = {"stadiums": {}, "lane1_class": {}}
 _STATS = _load_json("stadium_stats.json", _STATS_DEFAULT)
 
+# BUY判定閾値 (thresholds.json が tune_thresholds.py によって自動更新される)
+_THRESHOLDS_DEFAULT: dict = {
+    "ev_buy":          0.25,   # EVモード BUY 閾値 (EV > X)
+    "conf_buy":        68.0,   # EVモード BUY confidence 閾値
+    "ev_cand":         0.15,   # EVモード CANDIDATE 閾値
+    "conf_cand":       65.0,   # EVモード CANDIDATE confidence 閾値
+    "score_buy_conf":  70.0,   # スコアモード BUY confidence 閾値
+    "score_buy_gap":   10.0,   # スコアモード BUY gap 閾値
+    "score_cand_conf": 62.0,   # スコアモード CANDIDATE confidence 閾値
+    "score_cand_gap":   7.0,   # スコアモード CANDIDATE gap 閾値
+}
+_THRESHOLDS = _load_json("thresholds.json", _THRESHOLDS_DEFAULT)
+
 
 @dataclass
 class EntryData:
@@ -805,15 +818,22 @@ def decide(
     forced_skip = wind_rough or wave_rough or approach_unstable
     is_watch    = False
 
+    # BUY/CANDIDATE 閾値 (thresholds.json から動的ロード — tune_thresholds.py が毎週更新)
+    _th = _THRESHOLDS
+    score_buy_conf  = _th.get("score_buy_conf",  70.0)
+    score_buy_gap   = _th.get("score_buy_gap",   10.0)
+    score_cand_conf = _th.get("score_cand_conf", 62.0)
+    score_cand_gap  = _th.get("score_cand_gap",   7.0)
+
     lane1_label = ["1位", "2位", "3位", "4位以下"][min(lane1_rank, 3)] if lane1_rank >= 0 else "不明"
     approach_note = f" (コース{lane1_approach}進入)" if lane1_approach else ""
 
-    if not forced_skip and confidence >= 70 and gap >= 10 and not low_perf:
+    if not forced_skip and confidence >= score_buy_conf and gap >= score_buy_gap and not low_perf:
         decision = "buy"
         rank = "S"
         reasons.append(f"上位3艇のスコア差が明確 (gap={gap:.1f} / 1号艇{lane1_label}{approach_note})")
 
-    elif not forced_skip and confidence >= 62 and gap >= 7:
+    elif not forced_skip and confidence >= score_cand_conf and gap >= score_cand_gap:
         decision = "candidate"
         rank = "A"
         reasons.append(f"上位3艇が安定 (gap={gap:.1f} / 1号艇{lane1_label}{approach_note})")
@@ -872,17 +892,22 @@ def decide(
             pick = ev_pick
 
             # EV ベースの判定（confidence もあわせて参照）
-            # BUY条件: EV>0.25 かつ conf>=68 かつ 1号艇がpickに含まれること
-            # 実績: 1号艇ナシpickは2%的中、1号艇含むpickは26%的中
+            # BUY条件: EV>ev_buy かつ conf>=conf_buy かつ 1号艇がpickに含まれること
+            # 閾値は thresholds.json (tune_thresholds.py が毎週最適化) から動的ロード
+            ev_buy   = _th.get("ev_buy",   0.25)
+            conf_buy = _th.get("conf_buy", 68.0)
+            ev_cand  = _th.get("ev_cand",  0.15)
+            conf_cand = _th.get("conf_cand", 65.0)
+
             has_lane1_in_pick = ev_pick and '1' in ev_pick.split('-')
-            if best_ev > 0.25 and confidence >= 68 and has_lane1_in_pick and not low_perf:
+            if best_ev > ev_buy and confidence >= conf_buy and has_lane1_in_pick and not low_perf:
                 decision = "buy"
                 rank     = "S"
                 reasons.append(
                     f"EV={best_ev:+.2f} (期待値+{best_ev*100:.0f}%) / conf={round(confidence,1)} "
                     f"/ gap={gap:.1f} — 市場が過小評価している組み合わせ"
                 )
-            elif best_ev > 0.15 and confidence >= 65:
+            elif best_ev > ev_cand and confidence >= conf_cand:
                 # EV プラスだが1号艇なし or 閾値未満 → CANDIDATE止まり
                 decision = "candidate"
                 rank     = "A"

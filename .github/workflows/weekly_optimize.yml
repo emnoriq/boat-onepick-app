@@ -72,7 +72,19 @@ jobs:
           SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
-      # ─── Step 3: 変更があればコミット & プッシュ ─────────────────────────
+      # ─── Step 3: BUY判定閾値の最適化 ─────────────────────────────────────
+      - name: Tune buy thresholds
+        continue-on-error: true
+        run: |
+          python3 scraper/tune_thresholds.py \
+            --days ${{ github.event.inputs.days || '90' }} \
+            --min-bets 20 \
+            --save
+        env:
+          SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+      # ─── Step 4: 変更があればコミット & プッシュ ─────────────────────────
       - name: Commit updated params
         run: |
           git config user.name  "github-actions[bot]"
@@ -81,12 +93,12 @@ jobs:
           # 変更ファイルを確認
           git diff --name-only
 
-          CHANGED=$(git diff --name-only scraper/weights.json scraper/stadium_stats.json 2>/dev/null)
+          CHANGED=$(git diff --name-only scraper/weights.json scraper/stadium_stats.json scraper/thresholds.json 2>/dev/null)
           if [ -n "$CHANGED" ]; then
-            git add scraper/weights.json scraper/stadium_stats.json
+            git add scraper/weights.json scraper/stadium_stats.json scraper/thresholds.json
             JST=$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')
             DAYS_LABEL="${{ github.event.inputs.days || '90' }}"
-            git commit -m "$(printf 'auto: 週次パラメータ更新 %s\n\nweekly_optimize.yml: 直近%s日 optimize_weights + update_stats\n\nCo-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>' "$JST" "$DAYS_LABEL")"
+            git commit -m "$(printf 'auto: 週次パラメータ更新 %s\n\nweekly_optimize.yml: 直近%s日 optimize_weights + update_stats + tune_thresholds\n\nCo-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>' "$JST" "$DAYS_LABEL")"
             git pull --rebase
             git push
             echo "✅ パラメータ更新をコミットしました"
