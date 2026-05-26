@@ -33,8 +33,8 @@ JST = timezone(timedelta(hours=9))
 # ヘルパー
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _paginate(db, table: str, select: str, filters: list[tuple], limit=10000) -> list[dict]:
-    """ページネーション付き全件取得"""
+def _paginate(db, table: str, select: str, filters: list[tuple], limit=1000) -> list[dict]:
+    """ページネーション付き全件取得（date/status 等の通常カラム用）"""
     rows, offset = [], 0
     while True:
         q = db.table(table).select(select)
@@ -51,42 +51,56 @@ def _paginate(db, table: str, select: str, filters: list[tuple], limit=10000) ->
     return rows
 
 
+def _count_entries_by_race_ids(db, race_ids: list[str], with_exh: bool = False) -> int:
+    """race_ids を200件ずつチャンクして entries 件数を COUNT で取得（メモリ効率版）"""
+    if not race_ids:
+        return 0
+    total = 0
+    CHUNK = 200
+    for i in range(0, len(race_ids), CHUNK):
+        chunk = race_ids[i:i + CHUNK]
+        q = db.table("entries").select("id", count="exact").in_("race_id", chunk)
+        if with_exh:
+            q = q.not_.is_("exhibition_time", "null")
+        res = q.execute()
+        total += res.count or 0
+    return total
+
+
+def _fetch_race_ids_since(db, since_date: str) -> list[str]:
+    """指定日以降の race_id を全件取得"""
+    ids, offset = [], 0
+    while True:
+        batch = (db.table("races").select("id")
+                 .gte("race_date", since_date)
+                 .range(offset, offset + 999).execute().data)
+        if not batch:
+            break
+        ids.extend(r["id"] for r in batch)
+        if len(batch) < 1000:
+            break
+        offset += 1000
+    return ids
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # チェック関数
 # ─────────────────────────────────────────────────────────────────────────────
 
 def check_exhibition_rate(db, days_short=7, days_long=30) -> dict:
-    """展示データ収集率を確認"""
+    """展示データ収集率を確認（COUNT クエリで効率よく集計）"""
     today = date.today()
-
     results = {}
     for label, days in [("7日", days_short), ("30日", days_long)]:
         since = (today - timedelta(days=days)).isoformat()
-
-        # 対象 entries 数
-        races = _paginate(db, "races", "id", [("race_date", "gte", since)])
-        race_ids = [r["id"] for r in races]
+        race_ids = _fetch_race_ids_since(db, since)
         if not race_ids:
             results[label] = {"total": 0, "with_exh": 0, "rate": 0.0}
             continue
-
-        # 全 entries
-        total_entries = _paginate(
-            db, "entries", "id,exhibition_time",
-            [("race_id", "gte", min(race_ids))]  # 近似フィルタ
-        )
-        # race_id でフィルタ（ページネーションの近似を補正）
-        race_id_set = set(race_ids)
-        target = [e for e in total_entries if e.get("race_id") in race_id_set]
-        with_exh = [e for e in target if e.get("exhibition_time") is not None]
-
-        rate = len(with_exh) / len(target) if target else 0.0
-        results[label] = {
-            "total": len(target),
-            "with_exh": len(with_exh),
-            "rate": rate,
-        }
-
+        total   = _count_entries_by_race_ids(db, race_ids, with_exh=False)
+        with_exh = _count_entries_by_race_ids(db, race_ids, with_exh=True)
+        rate = with_exh / total if total else 0.0
+        results[label] = {"total": total, "with_exh": with_exh, "rate": rate}
     return results
 
 
@@ -96,24 +110,21 @@ def check_today_exhibition(db) -> dict:
     races = _paginate(db, "races", "id,stadium,race_no,status",
                       [("race_date", "eq", today)])
 
-    # pre_race 対象（scheduled / running）
-    target_races = [r for r in races if r["status"] in ("scheduled", "running", "closed")]
+    # scheduled (朝スキャン後) または final (展示取得済み)
+    target_races = [r for r in races
+                    if r["status"] in ("scheduled", "final", "finished")]
     if not target_races:
         return {"races": 0, "entries_total": 0, "entries_with_exh": 0, "rate": 0.0}
 
     race_ids = [r["id"] for r in target_races]
-    race_id_set = set(race_ids)
-
-    entries = _paginate(db, "entries", "race_id,lane,exhibition_time",
-                        [("race_id", "gte", min(race_ids))])
-    target_entries = [e for e in entries if e.get("race_id") in race_id_set]
-    with_exh = [e for e in target_entries if e.get("exhibition_time") is not None]
+    total    = _count_entries_by_race_ids(db, race_ids, with_exh=False)
+    with_exh = _count_entries_by_race_ids(db, race_ids, with_exh=True)
 
     return {
         "races": len(target_races),
-        "entries_total": len(target_entries),
-        "entries_with_exh": len(with_exh),
-        "rate": len(with_exh) / len(target_entries) if target_entries else 0.0,
+        "entries_total": total,
+        "entries_with_exh": with_exh,
+        "rate": with_exh / total if total else 0.0,
     }
 
 
@@ -121,54 +132,59 @@ def check_prediction_accuracy(db, days=30) -> dict:
     """予測的中率を確認（BUY予測のみ）"""
     since = (date.today() - timedelta(days=days)).isoformat()
 
-    predictions = _paginate(db, "predictions", "id,race_id,decision,pick,result_set,hit",
+    # decision は DB では小文字 "buy" で保存されている
+    # is_hit カラムで的中判定（旧コードの "hit" は誤りだった）
+    predictions = _paginate(db, "predictions", "id,race_id,decision,pick,is_hit",
                             [("created_at", "gte", since + "T00:00:00")])
 
-    buy_preds = [p for p in predictions if p.get("decision") == "BUY"]
-    hits = [p for p in buy_preds if p.get("hit") is True]
-
-    # 結果未確定を除く（hit が null でないもの）
-    decided = [p for p in buy_preds if p.get("hit") is not None]
-    hit_decided = [p for p in decided if p.get("hit") is True]
+    buy_preds  = [p for p in predictions if p.get("decision") == "buy"]
+    decided    = [p for p in buy_preds   if p.get("is_hit") is not None]
+    hit_decided = [p for p in decided    if p.get("is_hit") is True]
 
     return {
         "total_predictions": len(predictions),
-        "buy_predictions": len(buy_preds),
-        "decided": len(decided),
-        "hits": len(hit_decided),
-        "hit_rate": len(hit_decided) / len(decided) if decided else None,
-        "break_even": 0.240,
+        "buy_predictions":   len(buy_preds),
+        "decided":           len(decided),
+        "hits":              len(hit_decided),
+        "hit_rate":          len(hit_decided) / len(decided) if decided else None,
+        "break_even":        0.240,
     }
 
 
 def check_data_gaps(db, days=7) -> dict:
-    """races に対して predictions が欠けているケースを検出"""
+    """races に対して predictions / results が欠けているケースを検出"""
     since = (date.today() - timedelta(days=days)).isoformat()
 
     races = _paginate(db, "races", "id,race_date,stadium,race_no,status",
                       [("race_date", "gte", since)])
-    finished = [r for r in races if r["status"] in ("closed", "finished", "done")]
+    # "finished" = 結果取得済み。"final" = 直前スキャン済みだがまだ結果なし
+    finished = [r for r in races if r["status"] == "finished"]
 
     if not finished:
         return {"races_finished": 0, "missing_prediction": 0, "missing_result": 0}
 
-    race_ids = set(r["id"] for r in finished)
+    race_ids = [r["id"] for r in finished]
+    race_id_set = set(race_ids)
+    CHUNK = 200
 
-    predictions = _paginate(db, "predictions", "race_id",
-                            [("race_id", "gte", min(race_ids))])
-    pred_ids = set(p["race_id"] for p in predictions if p.get("race_id") in race_ids)
+    # predictions の有無を chunk で確認
+    pred_ids: set[str] = set()
+    for i in range(0, len(race_ids), CHUNK):
+        chunk = race_ids[i:i + CHUNK]
+        rows = db.table("predictions").select("race_id").in_("race_id", chunk).execute().data
+        pred_ids.update(r["race_id"] for r in (rows or []))
 
-    results_rows = _paginate(db, "results", "race_id",
-                             [("race_id", "gte", min(race_ids))])
-    result_ids = set(r["race_id"] for r in results_rows if r.get("race_id") in race_ids)
-
-    missing_pred = race_ids - pred_ids
-    missing_result = race_ids - result_ids
+    # results の有無を chunk で確認
+    result_ids: set[str] = set()
+    for i in range(0, len(race_ids), CHUNK):
+        chunk = race_ids[i:i + CHUNK]
+        rows = db.table("results").select("race_id").in_("race_id", chunk).execute().data
+        result_ids.update(r["race_id"] for r in (rows or []))
 
     return {
-        "races_finished": len(finished),
-        "missing_prediction": len(missing_pred),
-        "missing_result": len(missing_result),
+        "races_finished":    len(finished),
+        "missing_prediction": len(race_id_set - pred_ids),
+        "missing_result":     len(race_id_set - result_ids),
     }
 
 

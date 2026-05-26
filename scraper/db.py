@@ -196,16 +196,20 @@ def get_races_near_close(db: Client, race_date: date, minutes_before: int = 10) 
 
 
 def get_entries_by_race_ids(db: Client, race_ids: list[str]) -> dict[str, list[dict]]:
-    """複数レースの entries を一括取得して {race_id: [entry_dict, ...]} を返す"""
+    """複数レースの entries を一括取得して {race_id: [entry_dict, ...]} を返す。
+    ⑪ 200件ずつチャンクして Supabase の .in_() 上限を回避。"""
     if not race_ids:
         return {}
-    res = (db.table("entries")
-           .select("*")
-           .in_("race_id", race_ids)
-           .execute())
     result: dict[str, list[dict]] = {}
-    for row in (res.data or []):
-        result.setdefault(row["race_id"], []).append(row)
+    CHUNK = 200
+    for i in range(0, len(race_ids), CHUNK):
+        chunk = race_ids[i:i + CHUNK]
+        rows = (db.table("entries")
+                .select("*")
+                .in_("race_id", chunk)
+                .execute().data or [])
+        for row in rows:
+            result.setdefault(row["race_id"], []).append(row)
     return result
 
 

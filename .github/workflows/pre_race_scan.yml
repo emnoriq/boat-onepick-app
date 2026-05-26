@@ -79,7 +79,8 @@ jobs:
               $FORCE_FLAG
           else
             # full モード: 締切前レースを全件処理
-            python3 scraper/main.py pre_race
+            # ④ --use-ml を有効化（ML blend 50% + 線形 50%、ホールドアウト 21.6% vs 線形 14.8%）
+            python3 scraper/main.py pre_race --use-ml --ml-blend 0.5
           fi
 
       - name: Exhibition data check
@@ -161,7 +162,8 @@ jobs:
           races = db.table("races").select("id,stadium,race_no,close_time").eq("race_date", today).eq("status","final").execute().data
           race_map = {r["id"]: r for r in races}
 
-          preds = db.table("predictions").select("race_id,decision,pick,confidence,reason") \
+          # ⑯ kelly_fraction も取得して通知メッセージに含める
+          preds = db.table("predictions").select("race_id,decision,pick,confidence,reason,kelly_fraction,best_ev") \
               .eq("decision", "buy").execute().data
 
           now = datetime.now(timezone.utc)
@@ -173,19 +175,18 @@ jobs:
               reason = p.get("reason") or ""
               if "[展示未取得]" in reason or "朝スキャン暫定" in reason:
                   continue
-              # 締切時刻をJSTに変換
               close_str = r["close_time"]
               try:
                   close_dt = datetime.fromisoformat(close_str)
                   if close_dt.tzinfo is None:
                       close_dt = close_dt.replace(tzinfo=timezone.utc)
-                  # 締切済みのレースは通知しない（スキャン直後の1回だけ通知するため）
                   if close_dt <= now:
                       continue
                   close_jst = close_dt.astimezone(JST).strftime("%H:%M")
               except Exception:
                   continue
-              buy_list.append((r["stadium"], r["race_no"], close_jst, p["pick"], p["confidence"]))
+              buy_list.append((r["stadium"], r["race_no"], close_jst, p["pick"],
+                               p["confidence"], p.get("kelly_fraction"), p.get("best_ev")))
 
           if not buy_list:
               print("通知対象なし")
@@ -193,8 +194,14 @@ jobs:
 
           import urllib.request, json
           topic = os.environ["NTFY_TOPIC"]
-          for stadium, race_no, close_jst, pick, conf in buy_list:
+          for stadium, race_no, close_jst, pick, conf, kelly, best_ev in buy_list:
+              # Kelly基準の賭け率を表示（バンクロールの何%を賭けるか）
+              kelly_str = f"Kelly {kelly*100:.1f}%" if kelly else ""
+              ev_str    = f"EV{best_ev:+.2f}" if best_ev is not None else ""
+              extra     = " | ".join(filter(None, [ev_str, kelly_str]))
               msg = f"🎯 {stadium} {race_no}R\n締切 {close_jst} | {pick} | {conf:.0f}pt"
+              if extra:
+                  msg += f"\n{extra}"
               req = urllib.request.Request(
                   f"https://ntfy.sh/{topic}",
                   data=msg.encode("utf-8"),

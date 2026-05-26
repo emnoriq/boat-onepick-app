@@ -124,6 +124,9 @@ def fetch_exhibition(stadium_code: str, race_no: int, target_date: date,
         elif title == "波高" and val is not None:
             condition.wave_height = val
 
+    # ⑩ 天候テキストを RaceCondition に保存
+    condition.weather = weather_text
+
     # 風波による approach_stable 判定 (後でコース並びでも再判定)
     if condition.wind_speed >= 5.0 or condition.wave_height >= 15.0:
         condition.approach_stable = False

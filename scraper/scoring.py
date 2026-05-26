@@ -113,9 +113,10 @@ class EntryData:
 
 @dataclass
 class RaceCondition:
-    wind_speed: float = 0.0    # m/s
-    wave_height: float = 0.0   # cm
+    wind_speed: float = 0.0       # m/s
+    wave_height: float = 0.0      # cm
     approach_stable: bool = True  # 進入が枠なり安定かどうか
+    weather: str = ""             # ⑩ 天候テキスト（晴/曇/雨）— 保存・ログ用、将来的にML特徴量化
 
 
 @dataclass
@@ -486,8 +487,13 @@ def score_entries_ml(
         blended.sort(key=lambda s: s.total, reverse=True)
         return blended
 
-    except Exception:
-        # モデル読み込み失敗等のフォールバック
+    except Exception as _ml_err:
+        # ⑧ MLエラーを可視化（以前は黙って無視していた）
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "score_entries_ml: ML処理でエラーが発生しました → 線形スコアにフォールバック: %s",
+            _ml_err
+        )
         return score_entries(entries, condition)
 
 

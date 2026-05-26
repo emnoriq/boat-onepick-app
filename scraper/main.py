@@ -246,6 +246,7 @@ def morning_scan(today: date,
             today,
         )
         for r in saved_races
+        if _stadium_name_to_code(r["stadium"]) is not None  # ③ 未知場名をスキップ
     ]
 
     all_entries_payload: list[dict] = []
@@ -384,9 +385,10 @@ def pre_race_scan(today: date, window_minutes: int = 45,
             r["race_no"],
             r["id"],
             today,
-            existing_entries_map.get(r["id"]),   # None = 未取得
+            existing_entries_map.get(r["id"]),
         )
         for r in races
+        if _stadium_name_to_code(r["stadium"]) is not None  # ③ 未知場名をスキップ
     ]
 
     results: list[tuple] = []
@@ -644,12 +646,13 @@ def pre_race_scan_single(today: date, stadium_name: str, race_no: int) -> None:
 
     bulk_upsert_entries(db, entries_payload)
     upsert_prediction(db, race_id, {
-        "pick":       pred["pick"],
-        "confidence": pred["confidence"],
-        "decision":   pred["decision"],
-        "reason":     "\n".join(reason_lines),
-        "gap":        pred["gap"],
-        "best_ev":    pred["best_ev"],  # DB にカラムがなければ db.py が自動リトライ
+        "pick":           pred["pick"],
+        "confidence":     pred["confidence"],
+        "decision":       pred["decision"],
+        "reason":         "\n".join(reason_lines),
+        "gap":            pred["gap"],
+        "best_ev":        pred["best_ev"],
+        "kelly_fraction": pred.get("kelly_fraction"),  # ② 欠落していたkelly_fractionを追加
     })
     mark_race_final(db, race_id)
 
@@ -714,13 +717,17 @@ def result_scan(today: date) -> None:
         logger.info("=== Result Scan: 対象レースなし ===")
         return
 
-    # 既に results が存在する race_id を除外
+    # 既に results が存在する race_id を除外 ⑫ 200件チャンクで上限回避
     past_ids = [r["id"] for r in past_races]
-    existing_res = (db.table("results")
-                    .select("race_id")
-                    .in_("race_id", past_ids)
-                    .execute())
-    has_result_ids = {row["race_id"] for row in (existing_res.data or [])}
+    has_result_ids: set[str] = set()
+    CHUNK = 200
+    for i in range(0, len(past_ids), CHUNK):
+        chunk = past_ids[i:i + CHUNK]
+        rows = (db.table("results")
+                .select("race_id")
+                .in_("race_id", chunk)
+                .execute().data or [])
+        has_result_ids.update(row["race_id"] for row in rows)
     to_process = [r for r in past_races if r["id"] not in has_result_ids]
 
     logger.info("=== Result Scan 開始 ===")
@@ -736,6 +743,7 @@ def result_scan(today: date) -> None:
     worker_args = [
         (_stadium_name_to_code(r["stadium"]), r["stadium"], r["race_no"], r["id"], today)
         for r in to_process
+        if _stadium_name_to_code(r["stadium"]) is not None  # ③ 未知場名をスキップ
     ]
 
     fetch_ok = 0
@@ -803,11 +811,12 @@ STADIUM_CODE_MAP = {
 }
 
 
-def _stadium_name_to_code(name: str) -> str:
+def _stadium_name_to_code(name: str) -> Optional[str]:
+    """場名→コード変換。③ 未知の場名は None を返してスキップ（黙ってフォールバックしない）"""
     code = STADIUM_CODE_MAP.get(name)
     if code is None:
-        logger.warning("未知の場名 '%s' — コードを 01(桐生) にフォールバックします", name)
-        return "01"
+        logger.error("未知の場名 '%s' — スキップします（STADIUM_CODE_MAP を確認してください）", name)
+        return None
     return code
 
 
