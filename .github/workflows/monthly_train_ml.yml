@@ -87,6 +87,7 @@ jobs:
             # model_meta.json から AUC を取得して commit message に含める
             AUC=$(python3 -c "import json; d=json.load(open('scraper/model_meta.json')); print(f\"{d.get('cv_auc_mean',0):.3f}\")" 2>/dev/null || echo "N/A")
             git commit -m "$(printf 'auto: 月次 ML モデル更新 %s (AUC=%s)\n\nmonthly_train_ml.yml: GradientBoostingClassifier + Isotonic Calibration\n\nCo-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>' "$JST" "$AUC")"
+            git pull --rebase
             git push
             echo "✅ ML モデルをコミットしました (AUC=${AUC})"
           else

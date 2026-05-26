@@ -87,6 +87,7 @@ jobs:
             JST=$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')
             DAYS_LABEL="${{ github.event.inputs.days || '90' }}"
             git commit -m "$(printf 'auto: 週次パラメータ更新 %s\n\nweekly_optimize.yml: 直近%s日 optimize_weights + update_stats\n\nCo-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>' "$JST" "$DAYS_LABEL")"
+            git pull --rebase
             git push
             echo "✅ パラメータ更新をコミットしました"
           else
