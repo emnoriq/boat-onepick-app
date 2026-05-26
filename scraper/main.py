@@ -29,6 +29,7 @@ from fetch_results import fetch_result
 from fetch_odds import fetch_trifecta_box_odds, get_pick_payout
 from fetch_racer_stats import fetch_course_win_rates, apply_course_win_rates
 from scoring import score_entries, score_entries_ml, decide, RaceCondition, EntryData
+from notify import notify_buy, notify_hit, notify_miss
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
@@ -487,6 +488,19 @@ def pre_race_scan(today: date, window_minutes: int = 45,
         # カウント (watch は is_watch フラグで判別)
         if pred["decision"] == "buy":
             counts["buy"] += 1
+            # ntfy プッシュ通知
+            _close = close_time_map.get(race_id, "")
+            _race_time = None
+            if _close:
+                try:
+                    _dt = datetime.fromisoformat(_close)
+                    if _dt.tzinfo is None:
+                        _dt = _dt.replace(tzinfo=timezone.utc)
+                    _race_time = _dt.astimezone(JST).strftime("%H:%M")
+                except Exception:
+                    pass
+            notify_buy(name, race_no, pred["pick"], pred["confidence"],
+                       best_ev=pred.get("best_ev"), race_time=_race_time)
         elif pred["decision"] == "candidate":
             counts["candidate"] += 1
         elif pred.get("is_watch"):
@@ -659,6 +673,10 @@ def pre_race_scan_single(today: date, stadium_name: str, race_no: int) -> None:
     logger.info("=== 最終判定 ===")
     logger.info("pick: %s / confidence: %.1f / decision: %s / is_watch: %s",
                 pred["pick"], pred["confidence"], pred["decision"], pred.get("is_watch"))
+
+    if pred["decision"] == "buy":
+        notify_buy(stadium_name, race_no, pred["pick"], pred["confidence"],
+                   best_ev=pred.get("best_ev"))
     logger.info("gap(3位-4位): %.1f点 / best_ev: %s",
                 pred["gap"], f"{pred['best_ev']:+.4f}" if pred.get("best_ev") is not None else "N/A")
     for r in pred["reason"]:
@@ -692,6 +710,19 @@ def _save_race_result(db, race_id: str, stadium: str, race_no: int,
                 stadium, race_no, res.get("trifecta_result"),
                 pick_str, "的中" if is_hit else "不的中",
                 res.get("payout"), res.get("popularity"))
+
+    # BUY だった場合のみ的中/外れ通知
+    decision_row = (db.table("predictions")
+                    .select("decision")
+                    .eq("race_id", race_id)
+                    .execute().data)
+    if decision_row and decision_row[0].get("decision") == "buy":
+        payout = res.get("payout") or 0
+        trifecta = res.get("trifecta_result", "")
+        if is_hit:
+            notify_hit(stadium, race_no, pick_str, int(payout))
+        else:
+            notify_miss(stadium, race_no, pick_str, trifecta)
 
 
 def result_scan(today: date) -> None:
