@@ -78,7 +78,7 @@ jobs:
         run: |
           python3 scraper/tune_thresholds.py \
             --days ${{ github.event.inputs.days || '90' }} \
-            --min-bets 20 \
+            --min-bets 50 \
             --save
         env:
           SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
