@@ -84,7 +84,15 @@ jobs:
           SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
-      # ─── Step 4: 変更があればコミット & プッシュ ─────────────────────────
+      # ─── Step 4: ヘルスチェック ──────────────────────────────────────────
+      - name: Health check
+        run: |
+          python3 scraper/check_health.py
+        env:
+          SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+      # ─── Step 5: 変更があればコミット & プッシュ ─────────────────────────
       - name: Commit updated params
         run: |
           git config user.name  "github-actions[bot]"
