@@ -46,10 +46,37 @@
       高精度場(下関32%/福岡29%/常滑28%) BUY条件をより通しやすく
 """
 
+import json
 import math
+import os
 from dataclasses import dataclass
 from itertools import combinations as _combinations
 from typing import Optional
+
+# ── 動的重み・統計ファイルのロード ────────────────────────────────────────────
+_SCORING_DIR = os.path.dirname(__file__)
+
+
+def _load_json(filename: str, default: dict) -> dict:
+    """JSON ファイルを読み込む。存在しなければ default を返す。"""
+    path = os.path.join(_SCORING_DIR, filename)
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
+
+# 重み乗数 (weights.json が weekly_optimize.yml によって自動更新される)
+_WEIGHTS_DEFAULT = {
+    "w_player": 1.0, "w_motor": 1.0, "w_lane": 1.0,
+    "w_course": 1.0, "w_st": 1.0,   "w_local": 1.0,
+}
+_WEIGHTS = _load_json("weights.json", _WEIGHTS_DEFAULT)
+
+# 場別・クラス別統計 (stadium_stats.json が update_stats.py によって自動更新される)
+_STATS_DEFAULT: dict = {"stadiums": {}, "lane1_class": {}}
+_STATS = _load_json("stadium_stats.json", _STATS_DEFAULT)
 
 
 @dataclass
@@ -245,7 +272,16 @@ def morning_score(entry: EntryData, race_avg_motor: Optional[float] = None) -> f
     local = _local_top3_score(entry.local_top3_rate) if entry.local_top3_rate > 0 \
             else _local_rate_score(entry.local_win_rate)  # フォールバック
 
-    return min(70.0, player + motor + lane + course + st + local)
+    # 動的重み乗数を適用 (weights.json が weekly_optimize.yml によって更新される)
+    w = _WEIGHTS
+    return min(70.0,
+        w.get("w_player", 1.0) * player +
+        w.get("w_motor",  1.0) * motor  +
+        w.get("w_lane",   1.0) * lane   +
+        w.get("w_course", 1.0) * course +
+        w.get("w_st",     1.0) * st     +
+        w.get("w_local",  1.0) * local
+    )
 
 
 def pre_race_score(
@@ -373,6 +409,88 @@ def score_entries(entries: list[EntryData], condition: RaceCondition) -> list[En
     return scores
 
 
+def score_entries_ml(
+    entries: list[EntryData],
+    condition: RaceCondition,
+    blend_alpha: float = 0.5,
+) -> list[EntryScore]:
+    """
+    ML モデル (GradientBoosting) + 線形スコアのブレンド版 score_entries()。
+
+    blend_alpha: ML の重み (0.0=線形のみ, 1.0=MLのみ, 0.5=50/50ブレンド)
+
+    model_gbm.pkl が存在しない場合は通常の score_entries() にフォールバック。
+    """
+    try:
+        import pickle
+        import numpy as np
+        from scoring_ml import predict_scores, load_model
+        model = load_model()
+        if model is None:
+            return score_entries(entries, condition)
+
+        # ML スコア計算
+        entries_dict = []
+        for e in entries:
+            entries_dict.append({
+                "lane":                e.lane,
+                "racer_class":         e.racer_class,
+                "national_top3_rate":  e.national_top3_rate,
+                "local_top3_rate":     e.local_top3_rate,
+                "local_win_rate":      e.local_win_rate,
+                "motor_rate":          e.motor_rate,
+                "boat_rate":           e.boat_rate,
+                "avg_st":              e.avg_st,
+                "f_count":             e.f_count,
+                "l_count":             e.l_count,
+                "c1_win_rate":         e.c1_win_rate,
+                "c2_win_rate":         e.c2_win_rate,
+                "c3_win_rate":         e.c3_win_rate,
+                "c4_win_rate":         e.c4_win_rate,
+                "c5_win_rate":         e.c5_win_rate,
+                "c6_win_rate":         e.c6_win_rate,
+            })
+        ml_probs = predict_scores(entries_dict, model)  # {lane: prob}
+
+        # 線形スコア計算
+        linear_scores = score_entries(entries, condition)
+        linear_map = {s.lane: s for s in linear_scores}
+
+        # 正規化: ML確率を [0, 70] スケールに変換
+        probs_arr = np.array(list(ml_probs.values()))
+        p_min, p_max = probs_arr.min(), probs_arr.max()
+        if p_max > p_min:
+            ml_normalized = {
+                lane: (p - p_min) / (p_max - p_min) * 70.0
+                for lane, p in ml_probs.items()
+            }
+        else:
+            ml_normalized = {lane: 35.0 for lane in ml_probs}
+
+        # ブレンド
+        blended: list[EntryScore] = []
+        for e in entries:
+            lin = linear_map.get(e.lane)
+            ml_score  = ml_normalized.get(e.lane, 35.0)
+            lin_score = lin.morning_score if lin else 35.0
+            pre_score = lin.pre_race_score if lin else 0.0
+
+            blended_morning = blend_alpha * ml_score + (1.0 - blend_alpha) * lin_score
+            blended.append(EntryScore(
+                lane=e.lane,
+                racer_name=e.racer_name,
+                morning_score=blended_morning,
+                pre_race_score=pre_score,
+            ))
+
+        blended.sort(key=lambda s: s.total, reverse=True)
+        return blended
+
+    except Exception:
+        # モデル読み込み失敗等のフォールバック
+        return score_entries(entries, condition)
+
+
 def make_pick(scores: list[EntryScore]) -> str:
     """上位3艇を三連複1点として返す (例: '1-2-4')
 
@@ -495,35 +613,61 @@ def calculate_combo_ev(
     return ev
 
 
-# ── 場別 的中率実績 (2199レース分析) ────────────────────────────────────────
-# 低パフォーマンス場: BUYを認めず信頼度にペナルティを課す
-_LOW_PERF_STADIUMS: dict[str, tuple[str, float]] = {
-    # 場名: (実績的中率表示, confidence乗数)
-    "びわこ": ("10.0%", 0.82),
-    "大村":   ("11.9%", 0.84),
-    "津":     ("14.6%", 0.87),
-    "戸田":   ("14.6%", 0.87),
-}
+# ── 場別・クラス別 補正値 (stadium_stats.json から動的ロード) ───────────────
+# 全体平均との差が ±2% 以上あれば補正対象とする閾値
+_OVERALL_HIT_RATE = 0.186   # 初期値: 全体平均 (update_stats.py 実行後は実績値で上書きされる)
+_BUY_INELIGIBLE_THRESHOLD = 0.110   # この的中率未満の場はBUY絶対不可 (びわこ8.3%/津8.3%等)
 
-# 高パフォーマンス場: BUY条件をやや緩和
-_HIGH_PERF_STADIUMS: dict[str, tuple[str, float]] = {
-    # 場名: (実績的中率表示, confidence乗数)
-    "下関":   ("32.3%", 1.06),
-    "福岡":   ("29.2%", 1.04),
-    "常滑":   ("28.4%", 1.03),
-    "住之江": ("25.4%", 1.02),
-}
 
-# 1号艇クラス別 的中率実績 (2199レース)
-_LANE1_CLASS_MUL: dict[str, float] = {
-    "A1": 1.05,   # 22.2% 的中 → 全体+3.6%
-    "A2": 1.00,   # 中間 (データ未収集、中立扱い)
-    "B1": 0.88,   # 14.3% 的中 → 全体-4.3%
-    "B2": 0.82,   # B1 より更に低い見込み
-}
-_LANE1_CLASS_HITRATE: dict[str, str] = {
-    "A1": "22.2%", "B1": "14.3%", "B2": "~12%",
-}
+def _get_stadium_conf_mul(stadium: Optional[str]) -> tuple[float, str]:
+    """
+    場名から (confidence乗数, 表示文字列) を返す。
+    stadium_stats.json が更新されると自動的に反映される。
+
+    sample=0  → 初期値(硬直値)として信頼し使用
+    0<sample<30 → データ不足のため中立扱い
+    sample>=30  → 実績値として使用
+    """
+    if not stadium:
+        return 1.0, ""
+    entry = _STATS.get("stadiums", {}).get(stadium)
+    if not entry:
+        return 1.0, ""
+    mul = float(entry.get("conf_mul", 1.0))
+    hit_rate = float(entry.get("hit_rate", _OVERALL_HIT_RATE))
+    sample = int(entry.get("sample", 0))
+    if 0 < sample < 30:   # 少量データは中立扱い（初期値=0は初期推定値として使用）
+        return 1.0, ""
+    return mul, f"{hit_rate*100:.1f}%"
+
+
+def _is_low_perf_stadium(stadium: Optional[str]) -> bool:
+    """的中率が閾値未満の場かどうか"""
+    if not stadium:
+        return False
+    entry = _STATS.get("stadiums", {}).get(stadium)
+    if not entry:
+        return False
+    sample = int(entry.get("sample", 0))
+    if 0 < sample < 30:
+        return False
+    return float(entry.get("hit_rate", _OVERALL_HIT_RATE)) < _BUY_INELIGIBLE_THRESHOLD
+
+
+def _get_lane1_class_mul(lane1_class: Optional[str]) -> tuple[float, str]:
+    """1号艇クラスから (confidence乗数, 的中率表示) を返す"""
+    if not lane1_class:
+        return 1.0, ""
+    cls = lane1_class.upper()
+    entry = _STATS.get("lane1_class", {}).get(cls)
+    if not entry:
+        return 1.0, ""
+    mul = float(entry.get("conf_mul", 1.0))
+    hit_rate = float(entry.get("hit_rate", _OVERALL_HIT_RATE))
+    sample = int(entry.get("sample", 0))
+    if 0 < sample < 20:
+        return 1.0, ""
+    return mul, f"{hit_rate*100:.1f}%"
 
 
 def decide(
@@ -626,37 +770,31 @@ def decide(
 
     confidence = min(100.0, confidence * lane1_mul)
 
-    # ── 場別補正 ──────────────────────────────────────────────────────────────
-    stadium_note: Optional[str] = None
-    if stadium:
-        if stadium in _LOW_PERF_STADIUMS:
-            hit_pct, mul = _LOW_PERF_STADIUMS[stadium]
-            confidence = min(100.0, confidence * mul)
-            stadium_note = (
-                f"⚠️ {stadium}は低パフォーマンス場(的中率{hit_pct}) "
-                f"— 信頼度×{mul:.2f} / BUY不可・CANDIDATE止まり"
-            )
-            reasons.append(stadium_note)
-        elif stadium in _HIGH_PERF_STADIUMS:
-            hit_pct, mul = _HIGH_PERF_STADIUMS[stadium]
-            confidence = min(100.0, confidence * mul)
+    # ── 場別補正 (stadium_stats.json から動的ロード) ─────────────────────────
+    s_mul, s_hit_pct = _get_stadium_conf_mul(stadium)
+    low_perf = _is_low_perf_stadium(stadium)
+    if s_mul != 1.0 and stadium:
+        confidence = min(100.0, confidence * s_mul)
+        if low_perf:
             reasons.append(
-                f"✅ {stadium}は高パフォーマンス場(的中率{hit_pct}) "
-                f"— 信頼度×{mul:.2f}"
+                f"⚠️ {stadium}は低精度場(的中率{s_hit_pct}) "
+                f"— 信頼度×{s_mul:.2f} / BUY不可・CANDIDATE止まり"
+            )
+        else:
+            reasons.append(
+                f"✅ {stadium}は高精度場(的中率{s_hit_pct}) "
+                f"— 信頼度×{s_mul:.2f}"
             )
 
-    # ── 1号艇クラス補正 ───────────────────────────────────────────────────────
-    if lane1_class:
-        cls = lane1_class.upper()
-        cls_mul = _LANE1_CLASS_MUL.get(cls, 1.00)
-        if cls_mul != 1.00:
-            hit_pct = _LANE1_CLASS_HITRATE.get(cls, "")
-            confidence = min(100.0, confidence * cls_mul)
-            reasons.append(
-                f"1号艇{lane1_class}級"
-                f"{f'(的中率{hit_pct})' if hit_pct else ''}"
-                f" — 信頼度×{cls_mul:.2f}"
-            )
+    # ── 1号艇クラス補正 (stadium_stats.json から動的ロード) ──────────────────
+    cls_mul, cls_hit_pct = _get_lane1_class_mul(lane1_class)
+    if cls_mul != 1.0 and lane1_class:
+        confidence = min(100.0, confidence * cls_mul)
+        reasons.append(
+            f"1号艇{lane1_class}級"
+            f"{f'(的中率{cls_hit_pct})' if cls_hit_pct else ''}"
+            f" — 信頼度×{cls_mul:.2f}"
+        )
 
     forced_skip = wind_rough or wave_rough or approach_unstable
     is_watch    = False
@@ -664,8 +802,7 @@ def decide(
     lane1_label = ["1位", "2位", "3位", "4位以下"][min(lane1_rank, 3)] if lane1_rank >= 0 else "不明"
     approach_note = f" (コース{lane1_approach}進入)" if lane1_approach else ""
 
-    is_low_perf_stadium = stadium is not None and stadium in _LOW_PERF_STADIUMS
-    if not forced_skip and confidence >= 70 and gap >= 10 and not is_low_perf_stadium:
+    if not forced_skip and confidence >= 70 and gap >= 10 and not low_perf:
         decision = "buy"
         rank = "S"
         reasons.append(f"上位3艇のスコア差が明確 (gap={gap:.1f} / 1号艇{lane1_label}{approach_note})")
@@ -732,8 +869,7 @@ def decide(
             # BUY条件: EV>0.25 かつ conf>=68 かつ 1号艇がpickに含まれること
             # 実績: 1号艇ナシpickは2%的中、1号艇含むpickは26%的中
             has_lane1_in_pick = ev_pick and '1' in ev_pick.split('-')
-            is_low_perf_stadium = stadium is not None and stadium in _LOW_PERF_STADIUMS
-            if best_ev > 0.25 and confidence >= 68 and has_lane1_in_pick and not is_low_perf_stadium:
+            if best_ev > 0.25 and confidence >= 68 and has_lane1_in_pick and not low_perf:
                 decision = "buy"
                 rank     = "S"
                 reasons.append(

@@ -221,6 +221,10 @@ def main():
                         help="直近N日のみ使用 (省略時: 全件)")
     parser.add_argument("--train-ratio", type=float, default=0.8,
                         help="学習データ比率 (default: 0.8)")
+    parser.add_argument("--save", action="store_true",
+                        help="テスト改善が +0.5%% 以上あれば weights.json に自動保存")
+    parser.add_argument("--min-improvement", type=float, default=0.005,
+                        help="--save 時の最小改善閾値 (default: 0.005 = 0.5%%)")
     args = parser.parse_args()
 
     db = get_client()
@@ -304,18 +308,60 @@ def main():
         suggestions.append(f"  {name}: ×{val:.2f} → 実効最大値 {orig_max:.0f}pt → {new_max:.1f}pt  {direction}")
         logger.info(suggestions[-1])
 
-    # ── Test改善が 0.5% 以上あれば scoring.py を自動更新する提案
+    # ── weights.json への自動保存 ───────────────────────────────────────────
     improvement = test_opt - test_base
     if improvement >= 0.005:
         logger.info("")
-        logger.info("✅ テストデータで %.1f%% 改善。scoring.py の重みを更新することを推奨。", improvement * 100)
-        logger.info("   → python3 optimize_weights.py --apply で自動適用 (未実装: 手動で確認後に適用)")
+        logger.info("✅ テストデータで %.1f%% 改善 (%.1f%% → %.1f%%)",
+                    improvement * 100, test_base * 100, test_opt * 100)
     elif improvement > 0:
-        logger.info("△ 改善幅が小さい (%.2f%%)。現状維持を推奨。", improvement * 100)
+        logger.info("△ 改善幅が小さい (%.2f%%)。", improvement * 100)
     else:
         logger.info("❌ 最適化でテスト性能が改善しませんでした。過学習の可能性あり。")
 
+    if args.save:
+        if improvement >= args.min_improvement:
+            _save_weights(opt_params, param_names, test_base, test_opt)
+        else:
+            logger.info("--save: 改善幅 %.2f%% < 閾値 %.2f%% → weights.json を更新しません",
+                        improvement * 100, args.min_improvement * 100)
+
     return opt_params, test_opt
+
+
+def _save_weights(
+    params: "np.ndarray",
+    names: list[str],
+    baseline: float,
+    optimized: float,
+) -> None:
+    """最適化後の重みを weights.json に保存する。"""
+    import json
+    from datetime import datetime, timezone, timedelta
+
+    weights_path = os.path.join(os.path.dirname(__file__), "weights.json")
+    JST = timezone(timedelta(hours=9))
+    now_jst = datetime.now(JST).strftime("%Y-%m-%d %H:%M JST")
+
+    data = {
+        "_comment": (
+            "optimize_weights.py が自動生成。scoring.py の morning_score() で適用される。"
+        ),
+        "updated_at":        now_jst,
+        "train_hit_rate":    round(optimized, 4),
+        "baseline_hit_rate": round(baseline, 4),
+        "test_hit_rate":     round(optimized, 4),
+    }
+    for name, val in zip(names, params):
+        data[name] = round(float(val), 6)
+
+    with open(weights_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    logging.getLogger(__name__).info(
+        "✅ weights.json を保存しました: %s  (test %.1f%% → %.1f%%)",
+        weights_path, baseline * 100, optimized * 100,
+    )
 
 
 if __name__ == "__main__":

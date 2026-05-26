@@ -1,0 +1,97 @@
+name: "週次自動最適化"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 毎週土曜 20:00 UTC (日曜 05:00 JST) に自動実行
+#   1. optimize_weights.py : 直近 90 日の試合データで重みを最適化
+#      → テスト的中率が +0.5% 以上改善されたら weights.json を更新
+#   2. update_stats.py     : 場別・クラス別 的中率を DB から再集計
+#      → stadium_stats.json を更新
+#   3. 両 JSON に変更があれば自動コミット & プッシュ
+#      → 翌朝スキャンから新しいパラメータが有効になる
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    - cron: "0 20 * * 6"   # JST 日曜 05:00
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "最適化に使う直近N日 (default: 90)"
+        required: false
+        default: "90"
+      min_improvement:
+        description: "weights.json 更新の最小改善閾値 (default: 0.005 = 0.5%)"
+        required: false
+        default: "0.005"
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: scraper/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r scraper/requirements.txt
+
+      - name: Show run info
+        run: |
+          echo "UTC: $(date -u '+%Y-%m-%d %H:%M:%S')"
+          echo "JST: $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M:%S')"
+          echo "days          : ${{ github.event.inputs.days || '90' }}"
+          echo "min_improvement: ${{ github.event.inputs.min_improvement || '0.005' }}"
+
+      # ─── Step 1: 重みの最適化 ────────────────────────────────────────────
+      - name: Optimize weights
+        run: |
+          python3 scraper/optimize_weights.py \
+            --days ${{ github.event.inputs.days || '90' }} \
+            --save \
+            --min-improvement ${{ github.event.inputs.min_improvement || '0.005' }}
+        env:
+          SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+      # ─── Step 2: 場別・クラス別 統計の更新 ──────────────────────────────
+      - name: Update stadium stats
+        run: |
+          python3 scraper/update_stats.py \
+            --days ${{ github.event.inputs.days || '90' }}
+        env:
+          SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+      # ─── Step 3: 変更があればコミット & プッシュ ─────────────────────────
+      - name: Commit updated params
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 変更ファイルを確認
+          git diff --name-only
+
+          CHANGED=$(git diff --name-only scraper/weights.json scraper/stadium_stats.json 2>/dev/null)
+          if [ -n "$CHANGED" ]; then
+            git add scraper/weights.json scraper/stadium_stats.json
+            JST=$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')
+            git commit -m "auto: 週次パラメータ更新 ${JST}
+
+週次自動最適化 (weekly_optimize.yml):
+  - optimize_weights.py: 直近${{ github.event.inputs.days || '90' }}日データで重み再最適化
+  - update_stats.py: 場別・クラス別 的中率を DB から再集計
+
+Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+            git push
+            echo "✅ パラメータ更新をコミットしました"
+          else
+            echo "ℹ️  更新なし (改善閾値未達またはデータ不足)"
+          fi

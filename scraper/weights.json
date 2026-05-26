@@ -1,0 +1,13 @@
+{
+  "_comment": "朝スコア各成分の重み乗数 (1.0=変更なし)。weekly_optimize.yml が自動更新する。",
+  "w_player": 1.0,
+  "w_motor":  1.0,
+  "w_lane":   1.0,
+  "w_course": 1.0,
+  "w_st":     1.0,
+  "w_local":  1.0,
+  "updated_at":      "2026-05-25",
+  "train_hit_rate":  0.0,
+  "test_hit_rate":   0.0,
+  "baseline_hit_rate": 0.0
+}

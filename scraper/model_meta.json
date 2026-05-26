@@ -1,0 +1,20 @@
+{
+  "trained_at": "2026-05-26 18:27 JST",
+  "n_samples": 12066,
+  "n_features": 10,
+  "feature_names": [
+    "lane",
+    "class_enc",
+    "national_top3_rate",
+    "local_top3_rate",
+    "motor_rate_rel",
+    "boat_rate",
+    "avg_st",
+    "f_count",
+    "l_count",
+    "course_win_rate"
+  ],
+  "cv_auc_mean": 0.7641,
+  "cv_auc_std": 0.0039,
+  "days": null
+}

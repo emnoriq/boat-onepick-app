@@ -28,7 +28,7 @@ from fetch_exhibition import fetch_exhibition
 from fetch_results import fetch_result
 from fetch_odds import fetch_trifecta_box_odds, get_pick_payout
 from fetch_racer_stats import fetch_course_win_rates, apply_course_win_rates
-from scoring import score_entries, decide, RaceCondition, EntryData
+from scoring import score_entries, score_entries_ml, decide, RaceCondition, EntryData
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
@@ -157,7 +157,9 @@ def _morning_entry_worker(args: tuple) -> tuple:
 
 def morning_scan(today: date,
                  stadium_filter: Optional[str] = None,
-                 limit_races: Optional[int] = None) -> None:
+                 limit_races: Optional[int] = None,
+                 use_ml: bool = False,
+                 ml_blend: float = 0.5) -> None:
     """
     軽量版朝スキャン: races テーブルへの基本情報保存のみ。
 
@@ -290,7 +292,10 @@ def morning_scan(today: date,
     default_condition = RaceCondition()
 
     for race_id, name, race_no, entry_objects in entry_results:
-        scores = score_entries(entry_objects, default_condition)
+        if use_ml:
+            scores = score_entries_ml(entry_objects, default_condition, blend_alpha=ml_blend)
+        else:
+            scores = score_entries(entry_objects, default_condition)
         lane1_e = next((e for e in entry_objects if e.lane == 1), None)
         lane1_cls = lane1_e.racer_class if lane1_e else None
         pred   = decide(scores, default_condition,
@@ -330,7 +335,8 @@ def morning_scan(today: date,
     logger.info("合計              : %6.0f秒  (%.1f分)", total_elapsed, total_elapsed / 60)
 
 
-def pre_race_scan(today: date, window_minutes: int = 45) -> None:
+def pre_race_scan(today: date, window_minutes: int = 45,
+                  use_ml: bool = False, ml_blend: float = 0.5) -> None:
     """
     直前スキャン (メイン処理): 締切 window_minutes 分前以内のレースを処理
 
@@ -411,7 +417,10 @@ def pre_race_scan(today: date, window_minutes: int = 45) -> None:
             ex_ok_count += 1
             ex_ok_set.add(race_id)
 
-        scores = score_entries(entries, condition)
+        if use_ml:
+            scores = score_entries_ml(entries, condition, blend_alpha=ml_blend)
+        else:
+            scores = score_entries(entries, condition)
         score_map = {s.lane: s.total for s in scores}
 
         # 1号艇の実際の進入コース（confidence 補正用）
@@ -817,6 +826,10 @@ if __name__ == "__main__":
                         help="[morning 手動テスト用] 登録するレース数の上限 例: 10")
     parser.add_argument("--window-minutes", type=int, default=45,
                         help="[pre_race] 締切何分前までを対象にするか (省略時: 45)")
+    parser.add_argument("--use-ml", action="store_true",
+                        help="ML スコアリング (GradientBoosting) を使用 (model_gbm.pkl 必須)")
+    parser.add_argument("--ml-blend", type=float, default=0.5,
+                        help="[--use-ml] ML と線形スコアのブレンド比率 0.0〜1.0 (default: 0.5)")
     args = parser.parse_args()
 
     # date.today() はサーバのシステムTZ（GitHub Actions = UTC）を使うため
@@ -837,14 +850,17 @@ if __name__ == "__main__":
     if args.mode == "morning":
         morning_scan(target,
                      stadium_filter=args.stadium,
-                     limit_races=args.limit_races)
+                     limit_races=args.limit_races,
+                     use_ml=args.use_ml,
+                     ml_blend=args.ml_blend)
     elif args.mode == "pre_race":
         if args.force:
             if not args.stadium or not args.race_no:
                 parser.error("--force には --stadium と --race-no が必要です")
             pre_race_scan_single(target, args.stadium, args.race_no)
         else:
-            pre_race_scan(target, window_minutes=args.window_minutes)
+            pre_race_scan(target, window_minutes=args.window_minutes,
+                          use_ml=args.use_ml, ml_blend=args.ml_blend)
     elif args.mode == "result":
         if args.force:
             if not args.stadium or not args.race_no:

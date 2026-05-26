@@ -1,0 +1,210 @@
+{
+  "_comment": "update_stats.py が DB 実績から自動生成。手動編集不要。",
+  "_updated_at": "2026-05-25 22:42 JST",
+  "_sample_races": 2215,
+  "_overall_hit_rate": 0.1476,
+  "stadiums": {
+    "гҒігӮҸгҒ“": {
+      "hit_rate": 0.186,
+      "conf_mul": 1.0,
+      "sample": 0
+    },
+    "дёёдәҖ": {
+      "hit_rate": 0.186,
+      "conf_mul": 1.0,
+      "sample": 0
+    },
+    "е®®еі¶": {
+      "hit_rate": 0.186,
+      "conf_mul": 1.0,
+      "sample": 0
+    },
+    "еёёж»‘": {
+      "hit_rate": 0.186,
+      "conf_mul": 1.0,
+      "sample": 0
+    },
+    "еҫіеұұ": {
+      "hit_rate": 0.186,
+      "conf_mul": 1.0,
+      "sample": 0
+    },
+    "еӨҡж‘©е·қ": {
+      "hit_rate": 0.186,
+      "conf_mul": 1.0,
+      "sample": 0
+    },
+    "е…җеі¶": {
+      "hit_rate": 0.186,
+      "conf_mul": 1.0,
+      "sample": 0
+    },
+    "жЎҗз”ҹ": {
+      "hit_rate": 0.186,
+      "conf_mul": 1.0,
+      "sample": 0
+    },
+    "жҙҘ": {
+      "hit_rate": 0.186,
+      "conf_mul": 1.0,
+      "sample": 0
+    },
+    "иҠҰеұӢ": {
+      "hit_rate": 0.186,
+      "conf_mul": 1.0,
+      "sample": 0
+    },
+    "иӢҘжқҫ": {
+      "hit_rate": 0.186,
+      "conf_mul": 1.0,
+      "sample": 0
+    },
+    "йіҙй–Җ": {
+      "hit_rate": 0.186,
+      "conf_mul": 1.0,
+      "sample": 0
+    },
+    "びわこ": {
+      "hit_rate": 0.0833,
+      "conf_mul": 0.93,
+      "sample": 108
+    },
+    "三国": {
+      "hit_rate": 0.1042,
+      "conf_mul": 0.953,
+      "sample": 96
+    },
+    "下関": {
+      "hit_rate": 0.2581,
+      "conf_mul": 1.12,
+      "sample": 62
+    },
+    "丸亀": {
+      "hit_rate": 0.1641,
+      "conf_mul": 1.018,
+      "sample": 128
+    },
+    "住之江": {
+      "hit_rate": 0.1932,
+      "conf_mul": 1.049,
+      "sample": 88
+    },
+    "児島": {
+      "hit_rate": 0.1296,
+      "conf_mul": 0.98,
+      "sample": 108
+    },
+    "唐津": {
+      "hit_rate": 0.1667,
+      "conf_mul": 1.021,
+      "sample": 96
+    },
+    "多摩川": {
+      "hit_rate": 0.175,
+      "conf_mul": 1.03,
+      "sample": 120
+    },
+    "大村": {
+      "hit_rate": 0.1667,
+      "conf_mul": 1.021,
+      "sample": 72
+    },
+    "宮島": {
+      "hit_rate": 0.1528,
+      "conf_mul": 1.006,
+      "sample": 72
+    },
+    "尼崎": {
+      "hit_rate": 0.1917,
+      "conf_mul": 1.048,
+      "sample": 120
+    },
+    "常滑": {
+      "hit_rate": 0.2231,
+      "conf_mul": 1.082,
+      "sample": 121
+    },
+    "平和島": {
+      "hit_rate": 0.1167,
+      "conf_mul": 0.966,
+      "sample": 60
+    },
+    "徳山": {
+      "hit_rate": 0.2,
+      "conf_mul": 1.057,
+      "sample": 120
+    },
+    "戸田": {
+      "hit_rate": 0.1,
+      "conf_mul": 0.948,
+      "sample": 60
+    },
+    "桐生": {
+      "hit_rate": 0.1379,
+      "conf_mul": 0.989,
+      "sample": 87
+    },
+    "江戸川": {
+      "hit_rate": 0.186,
+      "conf_mul": 1.0,
+      "sample": 0
+    },
+    "津": {
+      "hit_rate": 0.0833,
+      "conf_mul": 0.93,
+      "sample": 108
+    },
+    "浜名湖": {
+      "hit_rate": 0.131,
+      "conf_mul": 0.982,
+      "sample": 84
+    },
+    "福岡": {
+      "hit_rate": 0.25,
+      "conf_mul": 1.111,
+      "sample": 48
+    },
+    "芦屋": {
+      "hit_rate": 0.1574,
+      "conf_mul": 1.011,
+      "sample": 108
+    },
+    "若松": {
+      "hit_rate": 0.1233,
+      "conf_mul": 0.974,
+      "sample": 73
+    },
+    "蒲郡": {
+      "hit_rate": 0.175,
+      "conf_mul": 1.03,
+      "sample": 40
+    },
+    "鳴門": {
+      "hit_rate": 0.131,
+      "conf_mul": 0.982,
+      "sample": 84
+    }
+  },
+  "lane1_class": {
+    "A1": {
+      "hit_rate": 0.2036,
+      "conf_mul": 1.061,
+      "sample": 604
+    },
+    "A2": {
+      "hit_rate": 0.1868,
+      "conf_mul": 1.042,
+      "sample": 546
+    },
+    "B1": {
+      "hit_rate": 0.1327,
+      "conf_mul": 0.984,
+      "sample": 716
+    },
+    "B2": {
+      "hit_rate": 0.1489,
+      "conf_mul": 1.001,
+      "sample": 47
+    }
+  }
+}

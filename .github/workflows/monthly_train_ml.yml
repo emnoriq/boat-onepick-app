@@ -1,0 +1,98 @@
+name: "月次 ML モデル学習"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 毎月1日 19:00 UTC (翌日 04:00 JST) に自動実行
+#   1. scoring_ml.py train : GradientBoosting モデルを全履歴データで学習
+#   2. scoring_ml.py evaluate : 線形スコアと精度比較
+#   3. model_gbm.pkl / model_meta.json をコミット
+#
+# 【注意】
+#   ML モデルは main.py --use-ml フラグで使用できる (デフォルトはオフ)
+#   精度が線形スコアを上回った場合に手動で有効化を検討する
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    - cron: "0 19 1 * *"   # 毎月1日 JST 04:00
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "学習に使う直近N日 (default: 全件)"
+        required: false
+        default: ""
+
+jobs:
+  train-ml:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: scraper/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r scraper/requirements.txt
+
+      - name: Show run info
+        run: |
+          echo "UTC: $(date -u '+%Y-%m-%d %H:%M:%S')"
+          echo "JST: $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M:%S')"
+          echo "days: ${{ github.event.inputs.days || '全件' }}"
+
+      # ─── Step 1: ML モデル学習 ────────────────────────────────────────────
+      - name: Train ML model
+        run: |
+          DAYS_ARG=""
+          if [ -n "${{ github.event.inputs.days }}" ]; then
+            DAYS_ARG="--days ${{ github.event.inputs.days }}"
+          fi
+          python3 scraper/scoring_ml.py train $DAYS_ARG
+        env:
+          SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+      # ─── Step 2: 精度比較評価 ─────────────────────────────────────────────
+      - name: Evaluate ML vs linear score
+        run: |
+          DAYS_ARG=""
+          if [ -n "${{ github.event.inputs.days }}" ]; then
+            DAYS_ARG="--days ${{ github.event.inputs.days }}"
+          fi
+          python3 scraper/scoring_ml.py evaluate $DAYS_ARG
+        env:
+          SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+      # ─── Step 3: モデルファイルをコミット ───────────────────────────────
+      - name: Commit ML model
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # .gitignore に pkl が含まれていないか確認してから add
+          git add -f scraper/model_gbm.pkl scraper/model_meta.json 2>/dev/null || true
+
+          CHANGED=$(git diff --cached --name-only scraper/model_gbm.pkl scraper/model_meta.json 2>/dev/null)
+          if [ -n "$CHANGED" ]; then
+            JST=$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')
+            # model_meta.json から AUC を取得して commit message に含める
+            AUC=$(python3 -c "import json; d=json.load(open('scraper/model_meta.json')); print(f\"{d.get('cv_auc_mean',0):.3f}\")" 2>/dev/null || echo "N/A")
+            git commit -m "auto: 月次 ML モデル更新 ${JST} (AUC=${AUC})
+
+月次自動学習 (monthly_train_ml.yml):
+  - GradientBoostingClassifier + Isotonic Calibration
+  - CV AUC: ${AUC}
+
+Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+            git push
+            echo "✅ ML モデルをコミットしました (AUC=${AUC})"
+          else
+            echo "ℹ️  モデルファイルに変更なし"
+          fi
