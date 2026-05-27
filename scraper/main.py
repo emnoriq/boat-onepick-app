@@ -29,7 +29,7 @@ from fetch_results import fetch_result
 from fetch_odds import fetch_trifecta_box_odds, get_pick_payout
 from fetch_racer_stats import fetch_course_win_rates, apply_course_win_rates
 from scoring import score_entries, score_entries_ml, decide, RaceCondition, EntryData
-from notify import notify_buy, notify_hit, notify_miss
+from notify import notify_buy, notify_hit
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
@@ -721,8 +721,6 @@ def _save_race_result(db, race_id: str, stadium: str, race_no: int,
         trifecta = res.get("trifecta_result", "")
         if is_hit:
             notify_hit(stadium, race_no, pick_str, int(payout))
-        else:
-            notify_miss(stadium, race_no, pick_str, trifecta)
 
 
 def result_scan(today: date) -> None:
