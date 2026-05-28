@@ -310,6 +310,8 @@ def morning_scan(today: date,
             "reason":     "[展示未取得]\n" + "\n".join(pred["reason"]),
             "gap":        pred["gap"],
         })
+        if pred["decision"] == "buy":
+            notify_buy(name, race_no, pred["pick"], pred["confidence"])
 
     if all_predictions_payload:
         bulk_upsert_predictions(db, all_predictions_payload)
