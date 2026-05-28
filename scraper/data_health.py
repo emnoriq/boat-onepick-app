@@ -147,7 +147,7 @@ def check_prediction_accuracy(db, days=30) -> dict:
         "decided":           len(decided),
         "hits":              len(hit_decided),
         "hit_rate":          len(hit_decided) / len(decided) if decided else None,
-        "break_even":        0.240,
+        "break_even":        0.150,   # 平均払戻¥677なら損益分岐は約14.8%
     }
 
 
@@ -213,7 +213,7 @@ def run_health_check(alert_only: bool = False, days: int = 30) -> int:
         mark = "✅" if rate_pct >= 50 else ("⚠️ " if rate_pct >= 10 else "❌")
         print(f"  {mark} 直近{label}: {rate_pct:.1f}%  "
               f"({stat['with_exh']}/{stat['total']} entries)")
-        if rate_pct < 10 and stat["total"] > 0:
+        if rate_pct < 5 and stat["total"] > 0:
             issues.append(f"展示データ収集率が低すぎます（直近{label}: {rate_pct:.1f}%）")
 
     # ── 2. 今日の展示データ ─────────────────────────────────────
