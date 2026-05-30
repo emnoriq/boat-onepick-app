@@ -181,7 +181,7 @@ export default async function StatsPage() {
             {(() => {
               const items = [
                 { ok: stats.sCount >= 30,            label: "BUYデータ 30件以上",  value: `${stats.sCount}件`,        note: "統計信頼性の最低ライン" },
-                { ok: parseFloat(stats.sRate) >= 35, label: "BUY 的中率 ≥ 35%",   value: `${stats.sRate}%`,           note: "回収率損益分岐の目安" },
+                { ok: parseFloat(stats.sRate) >= 20, label: "BUY 的中率 ≥ 20%",   value: `${stats.sRate}%`,           note: "平均払戻¥677での損益分岐は約15%" },
                 { ok: parseFloat(stats.sRoi) >= 100, label: "BUY 回収率 ≥ 100%",  value: `${stats.sRoi}%`,            note: "投資対象として最低条件" },
                 { ok: stats.evPositiveCount >= 10 && parseFloat(stats.evPositiveRate) >= 30,
                                                      label: "EV+ 的中率 ≥ 30%",    value: stats.evPositiveCount > 0 ? `${stats.evPositiveRate}%` : "−", note: "EV計算精度の検証" },

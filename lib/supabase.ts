@@ -286,9 +286,9 @@ async function _getStats() {
 
   // confidence 帯別
   const confBands = [
-    { label: "≥70",   rows: confirmed.filter(r => r.confidence >= 70) },
-    { label: "62-69", rows: confirmed.filter(r => r.confidence >= 62 && r.confidence < 70) },
-    { label: "55-61", rows: confirmed.filter(r => r.confidence >= 55 && r.confidence < 62) },
+    { label: "≥72",   rows: confirmed.filter(r => r.confidence >= 72) },
+    { label: "65-71", rows: confirmed.filter(r => r.confidence >= 65 && r.confidence < 72) },
+    { label: "55-64", rows: confirmed.filter(r => r.confidence >= 55 && r.confidence < 65) },
     { label: "<55",   rows: confirmed.filter(r => r.confidence < 55) },
   ].map(b => ({ label: b.label, ...tierStat(b.rows) }));
 
