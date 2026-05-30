@@ -413,6 +413,17 @@ def pre_race_scan(today: date, window_minutes: int = 45,
     counts = {"buy": 0, "candidate": 0, "watch": 0, "skip": 0}
     ex_ok_count = 0
 
+    # 朝にBUYだったレースを把握（展示後の更新通知に使用）
+    morning_buy_ids: set[str] = set()
+    if race_ids:
+        for i in range(0, len(race_ids), 200):
+            chunk = race_ids[i:i+200]
+            rows = (db.table("predictions").select("race_id,decision")
+                    .in_("race_id", chunk).execute().data or [])
+            for r in rows:
+                if r.get("decision") == "buy":
+                    morning_buy_ids.add(r["race_id"])
+
     for race_id, name, race_no, entries, condition, code in results:
         if entries is None:
             continue
@@ -488,23 +499,33 @@ def pre_race_scan(today: date, window_minutes: int = 45,
         race_ids_processed.append(race_id)
 
         # カウント (watch は is_watch フラグで判別)
+        # 締切時刻を JST 文字列に変換
+        _close = close_time_map.get(race_id, "")
+        _race_time = None
+        if _close:
+            try:
+                _dt = datetime.fromisoformat(_close)
+                if _dt.tzinfo is None:
+                    _dt = _dt.replace(tzinfo=timezone.utc)
+                _race_time = _dt.astimezone(JST).strftime("%H:%M")
+            except Exception:
+                pass
+
         if pred["decision"] == "buy":
             counts["buy"] += 1
-            # ntfy プッシュ通知
-            _close = close_time_map.get(race_id, "")
-            _race_time = None
-            if _close:
-                try:
-                    _dt = datetime.fromisoformat(_close)
-                    if _dt.tzinfo is None:
-                        _dt = _dt.replace(tzinfo=timezone.utc)
-                    _race_time = _dt.astimezone(JST).strftime("%H:%M")
-                except Exception:
-                    pass
+            # ntfy: EVモードでBUY → 通知
             notify_buy(name, race_no, pred["pick"], pred["confidence"],
                        best_ev=pred.get("best_ev"), race_time=_race_time)
         elif pred["decision"] == "candidate":
             counts["candidate"] += 1
+            # ntfy: 朝BUYだったが展示後CANDIDATEに変化 → 更新通知
+            if race_id in morning_buy_ids and ex_ok:
+                from notify import _send as _ntfy_send
+                _ntfy_send(
+                    title=f"📊 {name} {race_no}R  展示後→CANDIDATE",
+                    body=(f"pick: {pred['pick']}\nconf: {pred['confidence']:.1f}\n締切: {_race_time or '?'}"),
+                    priority="default", tags="boat",
+                )
         elif pred.get("is_watch"):
             counts["watch"] += 1
         else:
