@@ -3,10 +3,10 @@
   "_analysis": "実績2027件: conf>=68 → 的中率18.6% / ROI+8.1% が最良。EVより信頼度ベースが有効。",
   "_analysis2": "レース番号フィルター: 2R/3R/12R は conf>=68 でも的中率0% → BUY除外 (2026-05-26実績分析)",
   "_analysis3": "スコアモード最適化: conf>=72 + gap>=8 → 的中率40.6% / ROI+3.8% (71件グリッドサーチ 2026-05-27)",
-  "updated_at": null,
-  "ev_buy": 0.25,
-  "ev_buy_max": 0.50,
-  "conf_buy": 68.0,
+  "updated_at": "2026-05-31 06:22 JST",
+  "ev_buy": 0.35,
+  "ev_buy_max": 1.1,
+  "conf_buy": 67.5,
   "ev_cand": 0.15,
   "conf_cand": 65.0,
   "score_buy_conf": 72.0,
@@ -18,7 +18,7 @@
     3,
     12
   ],
-  "sample_n": 118,
-  "hit_rate": 0.186,
-  "roi": 0.081
+  "sample_n": 53,
+  "hit_rate": 0.1132,
+  "roi": 0.7226
 }
