@@ -518,14 +518,6 @@ def pre_race_scan(today: date, window_minutes: int = 45,
                        best_ev=pred.get("best_ev"), race_time=_race_time)
         elif pred["decision"] == "candidate":
             counts["candidate"] += 1
-            # ntfy: 朝BUYだったが展示後CANDIDATEに変化 → 更新通知
-            if race_id in morning_buy_ids and ex_ok:
-                from notify import _send as _ntfy_send
-                _ntfy_send(
-                    title=f"📊 {name} {race_no}R  展示後→CANDIDATE",
-                    body=(f"pick: {pred['pick']}\nconf: {pred['confidence']:.1f}\n締切: {_race_time or '?'}"),
-                    priority="default", tags="boat",
-                )
         elif pred.get("is_watch"):
             counts["watch"] += 1
         else:
