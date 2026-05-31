@@ -164,8 +164,13 @@ def grid_search(
         all_results (list[dict]):   全探索結果 (ROI降順)
     """
     # グリッド定義
+    # ev_max は「逆選択リスクの安全上限」であり 0.50 を超えてはならない。
+    # 実績: EV>0.5 → 的中率5.2% (市場が正しく「来ない」と評価した組み合わせ)。
+    # 少数サンプルだと grid search が高EV域の見かけ上の高ROIを拾い、
+    # この安全キャップを自動で無効化してしまう (逆選択バグの再発)。
+    # → グリッド上限を 0.50 に固定し、最適化が安全域を超えられないようにする。
     ev_min_grid = [round(x * 0.025, 3) for x in range(0, 17)]    # 0.000 〜 0.400
-    ev_max_grid = [round(0.30 + x * 0.10, 2) for x in range(9)]  # 0.30 〜 1.10 (上限キャップ)
+    ev_max_grid = [round(0.30 + x * 0.05, 2) for x in range(5)]  # 0.30 〜 0.50 (安全上限・固定)
     conf_grid   = [round(55.0 + x * 2.5, 1) for x in range(13)]  # 55.0 〜 85.0
 
     all_results: list[dict] = []
