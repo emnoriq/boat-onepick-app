@@ -513,9 +513,13 @@ def pre_race_scan(today: date, window_minutes: int = 45,
 
         if pred["decision"] == "buy":
             counts["buy"] += 1
-            # ntfy: EVモードでBUY → 通知
-            notify_buy(name, race_no, pred["pick"], pred["confidence"],
-                       best_ev=pred.get("best_ev"), race_time=_race_time)
+            # ntfy: 展示データが取得できたBUYのみ通知。
+            # 展示取得=この直後にfinal確定し窓から外れるため重複通知が起きない。
+            # 展示未取得のBUYは scheduled のまま15分ごとに再評価されるので、
+            # ここで通知すると同一レースを何度も通知してしまう → ex_ok で抑止。
+            if ex_ok:
+                notify_buy(name, race_no, pred["pick"], pred["confidence"],
+                           best_ev=pred.get("best_ev"), race_time=_race_time)
         elif pred["decision"] == "candidate":
             counts["candidate"] += 1
         elif pred.get("is_watch"):

@@ -582,7 +582,7 @@ def calculate_kelly(ev: float, payout: int, fraction: float = 0.25) -> float:
 
 def scores_to_combo_probs(
     scores: list[EntryScore],
-    temperature: float = 12.0,
+    temperature: float = 0.8,
 ) -> dict[str, float]:
     """
     全三連複組み合わせ（最大20通り）の推定的中確率を返す。
@@ -590,13 +590,28 @@ def scores_to_combo_probs(
     Softmax変換でボートのスコアを相対強度に変換し、
     3艇組み合わせの確率を積で近似（正規化済み）。
 
+    【スケール不変正規化 (v10)】
+    スコアを z-score (平均0・標準偏差1) に正規化してから softmax にかける。
+    これにより weights.json が weekly_optimize で更新されてスコアの絶対値や
+    分散が変わっても、確率分布の形が崩れない（＝EV計算が安定する）。
+
+    旧実装は固定 temperature=12 で生スコアを割っていたため、
+    重み最適化でスコア分散が拡大すると確率が本命に過剰集中し、
+    本命組み合わせのEVが過大評価される逆選択バグが発生していた。
+
     Args:
-        temperature: 大きいほど確率が均等に分散する（デフォルト12）
-                     小さくすると上位艇への集中度が増す
+        temperature: z-score に対する温度（小さいほど上位艇に集中）。
+                     0.8 で本命3艇ボックスの確率が実績(約30%)に整合する。
     Returns:
         {"1-2-3": 0.312, "1-2-4": 0.087, ...}  合計=1.0
     """
-    exps = {s.lane: math.exp(s.total / temperature) for s in scores}
+    totals = [s.total for s in scores]
+    n = len(totals)
+    mean = sum(totals) / n if n else 0.0
+    var = sum((t - mean) ** 2 for t in totals) / n if n else 0.0
+    std = math.sqrt(var) or 1.0   # 全艇同点の場合は1.0で割って均等分布に
+
+    exps = {s.lane: math.exp(((s.total - mean) / std) / temperature) for s in scores}
     total_exp = sum(exps.values())
     strength = {lane: v / total_exp for lane, v in exps.items()}
 
